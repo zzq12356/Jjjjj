@@ -18,6 +18,10 @@
             height: 100vh;
             font-family: 'Courier New', monospace;
             overflow: hidden;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
         .band-frame {
             width: 336px;
@@ -71,7 +75,6 @@
         const canvas = document.getElementById('game');
         const ctx = canvas.getContext('2d');
 
-        // 9 Pro 屏幕
         const W = 336;
         const H = 480;
         canvas.width = W;
@@ -87,8 +90,8 @@
         const PLAYER_SPEED = 1.8;
         const JUMP_FORCE = -4.5;
         const SEED = 12345;
+        const CURSOR_MAX_DIST = 3; // 光标离玩家最远3格
 
-        // 方块类型
         const AIR = 0;
         const DIRT = 1;
         const STONE = 2;
@@ -119,14 +122,6 @@
             [COAL]: '#2C3E50',
             [CRAFT_TABLE]: '#D4A574',
             [CHEST]: '#C0392B'
-        };
-
-        const TILE_NAMES = {
-            [DIRT]: '泥土', [STONE]: '石头', [GRASS]: '草方块',
-            [WOOD]: '木头', [LEAF]: '树叶', [COPPER]: '铜矿',
-            [IRON]: '铁矿', [SILVER]: '银矿', [GOLD]: '金矿',
-            [DIAMOND]: '钻石', [COAL]: '煤炭', [CRAFT_TABLE]: '合成台',
-            [CHEST]: '箱子'
         };
 
         // ==================== 伪随机噪声 ====================
@@ -191,12 +186,8 @@
 
         function getTileAt(x, y) {
             if (x < 0 || x >= WORLD_W || y < 0 || y >= WORLD_H) return STONE;
-
             const surfH = getSurfaceHeight(x);
-
-            // 天空
             if (y < surfH - 1) {
-                // 树
                 if (y >= surfH - 8 && y < surfH - 1) {
                     const treeBaseX = Math.floor(x / 6) * 6;
                     const distFromBase = Math.abs(x - (treeBaseX + 2.5));
@@ -208,25 +199,15 @@
                 }
                 return AIR;
             }
-
-            // 地表
             if (y === surfH - 1) return GRASS;
-
-            // 地下
             if (y >= surfH && y <= surfH + 3) return DIRT;
-
-            // 洞穴系统
             const caveVal = getCaveNoise(x, y);
             const caveThreshold = 0.45;
             const isCave = caveVal > caveThreshold;
-
             if (isCave && y > surfH + 3) return AIR;
-
-            // 矿脉
             if (!isCave && y > surfH + 3) {
                 const oreNoise = fbm(x * 0.12, y * 0.12, 2);
                 const depth = y - surfH;
-
                 if (depth > 80 && oreNoise > 0.72) return DIAMOND;
                 if (depth > 60 && oreNoise > 0.62) return GOLD;
                 if (depth > 40 && oreNoise > 0.55) return SILVER;
@@ -234,14 +215,11 @@
                 if (depth > 15 && oreNoise > 0.40) return COPPER;
                 if (depth > 10 && oreNoise < -0.55) return COAL;
             }
-
-            // 深层
             if (y > surfH + 80 && !isCave) return STONE;
             if (y > surfH + 6 && !isCave) {
                 if (hash(x, y) < 0.75) return STONE;
                 return DIRT;
             }
-
             if (!isCave && y >= surfH) return DIRT;
             return STONE;
         }
@@ -254,15 +232,19 @@
         let isOnGround = false;
         let facingRight = true;
 
+        // 光标
+        let cursorTileX = Math.floor(playerX);
+        let cursorTileY = Math.floor(playerY);
+        let cursorActive = false; // 摇杆是否激活
+
         // 血量
         let hp = 100;
         const maxHp = 100;
 
         // 背包
         const backpack = {};
-        const MAX_STACK = 64;
         let selectedSlot = 0;
-        const quickSlots = [DIRT, STONE, WOOD, COPPER, null]; // 快捷栏物品类型
+        const quickSlots = [DIRT, STONE, WOOD, COPPER, null];
 
         function addToBackpack(tileType, count = 1) {
             if (!tileType || tileType === AIR) return false;
@@ -286,7 +268,6 @@
             return quickSlots[selectedSlot];
         }
 
-        // 初始化背包给点东西
         addToBackpack(DIRT, 20);
         addToBackpack(STONE, 10);
         addToBackpack(WOOD, 5);
@@ -294,12 +275,6 @@
         // ==================== 碰撞检测 ====================
         function isSolid(tileType) {
             return tileType !== AIR && tileType !== null;
-        }
-
-        function getTileWorld(wx, wy) {
-            const tx = Math.floor(wx);
-            const ty = Math.floor(wy);
-            return getTileAt(tx, ty);
         }
 
         function checkCollisionWorld(x, y, w, h) {
@@ -310,7 +285,7 @@
             for (let cy = top; cy <= bottom; cy++) {
                 for (let cx = left; cx <= right; cx++) {
                     if (cx >= 0 && cx < WORLD_W && cy >= 0 && cy < WORLD_H) {
-                        if (isSolid(getTileAt(cx, cy))) return true;
+                        if (isSolid(getTileAtWithOverride(cx, cy))) return true;
                     } else if (cx < 0 || cx >= WORLD_W || cy >= WORLD_H) {
                         return true;
                     }
@@ -318,6 +293,46 @@
             }
             return false;
         }
+
+        // ==================== 世界覆盖数据 ====================
+        let worldOverrides = {};
+
+        function getTileAtWithOverride(x, y) {
+            const key = `${x},${y}`;
+            if (worldOverrides[key] !== undefined) return worldOverrides[key];
+            return getTileAt(x, y);
+        }
+
+        function removeTileWorld(tx, ty) {
+            const key = `${tx},${ty}`;
+            const original = getTileAtWithOverride(tx, ty);
+            if (isSolid(original) && original !== CRAFT_TABLE) {
+                worldOverrides[key] = AIR;
+                return original;
+            }
+            return null;
+        }
+
+        function placeTileWorld(tx, ty, tileType) {
+            const key = `${tx},${ty}`;
+            const original = getTileAtWithOverride(tx, ty);
+            if (!isSolid(original)) {
+                const px = Math.floor(playerX);
+                const py = Math.floor(playerY);
+                if (tx === px && (ty === py || ty === py + 1)) return false;
+                worldOverrides[key] = tileType;
+                return true;
+            }
+            return false;
+        }
+
+        // 初始化合成台
+        (function initCraftTable() {
+            const cx = Math.floor(WORLD_W / 2) - 10;
+            const cy = getSurfaceHeight(cx) - 1;
+            worldOverrides[`${cx},${cy}`] = CRAFT_TABLE;
+            worldOverrides[`${cx + 1},${cy}`] = CRAFT_TABLE;
+        })();
 
         // ==================== 相机 ====================
         let cameraX = playerX - VIEW_TILES_X / 2;
@@ -335,30 +350,42 @@
         // ==================== 输入状态 ====================
         const keys = {};
         let joystickActive = false;
-        let joystickDX = 0;
-        let joystickDY = 0;
         let joystickId = null;
         let joystickStartX = 0;
         let joystickStartY = 0;
+        let joystickDX = 0;
+        let joystickDY = 0;
 
-        // 摇杆区域（左下角）
-        const JOYSTICK_CX = 60;
-        const JOYSTICK_CY = 400;
-        const JOYSTICK_RADIUS = 35;
-        const JOYSTICK_KNOB_R = 16;
+        // 右下角摇杆
+        const JOYSTICK_CX = 280;
+        const JOYSTICK_CY = 410;
+        const JOYSTICK_RADIUS = 38;
+        const JOYSTICK_KNOB_R = 14;
+        const JOYSTICK_DEAD_ZONE = 6; // 死区半径
 
-        // 按钮区域（右下角）
-        const BTN_A = { x: 240, y: 380, r: 28 };
-        const BTN_B = { x: 300, y: 420, r: 24 };
-        const BTN_JUMP = { x: 270, y: 340, r: 22 };
+        // 按钮大小 = 摇杆的 1/3 ≈ 半径 13
+        const BTN_R = 13;
+        // A：摇杆上方偏左
+        const BTN_A = { x: JOYSTICK_CX - 30, y: JOYSTICK_CY - 48, r: BTN_R };
+        // 跳跃：摇杆右上
+        const BTN_JUMP = { x: JOYSTICK_CX + 32, y: JOYSTICK_CY - 38, r: BTN_R };
+        // B：摇杆左边偏下
+        const BTN_B = { x: JOYSTICK_CX - 42, y: JOYSTICK_CY - 10, r: BTN_R };
 
-        // 物品栏区域
-        const INV_X = 10;
+        // 左下方向键
+        const DPAD = {
+            up: { cx: 52, cy: 392, r: 16 },
+            down: { cx: 52, cy: 444, r: 16 },
+            left: { cx: 24, cy: 418, r: 16 },
+            right: { cx: 80, cy: 418, r: 16 }
+        };
+
+        // 物品栏
+        const INV_X = 6;
         const INV_Y = 100;
-        const INV_SIZE = 36;
-        const INV_ARROW_UP = { x: INV_X + INV_SIZE / 2, y: INV_Y - 18, r: 14 };
-        const INV_ARROW_DOWN = { x: INV_X + INV_SIZE / 2, y: INV_Y + INV_SIZE + 18, r: 14 };
-        const INV_SLOT = { x: INV_X, y: INV_Y, w: INV_SIZE, h: INV_SIZE };
+        const INV_SIZE = 34;
+        const INV_ARROW_UP = { x: INV_X + INV_SIZE / 2, y: INV_Y - 16, r: 12 };
+        const INV_ARROW_DOWN = { x: INV_X + INV_SIZE / 2, y: INV_Y + INV_SIZE + 16, r: 12 };
 
         function getTouchPos(e) {
             const rect = canvas.getBoundingClientRect();
@@ -378,58 +405,62 @@
             return dist(px, py, cx, cy) <= r;
         }
 
-        function isInRect(px, py, rx, ry, rw, rh) {
-            return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
-        }
-
         canvas.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             const pos = getTouchPos(e);
 
-            // 摇杆区域
-            if (dist(pos.x, pos.y, JOYSTICK_CX, JOYSTICK_CY) < JOYSTICK_RADIUS + 15) {
+            // 摇杆区域（优先检测，扩大一点触发区）
+            if (dist(pos.x, pos.y, JOYSTICK_CX, JOYSTICK_CY) < JOYSTICK_RADIUS + 10) {
                 joystickActive = true;
                 joystickId = e.pointerId;
                 joystickStartX = pos.x;
                 joystickStartY = pos.y;
                 joystickDX = 0;
                 joystickDY = 0;
+                cursorActive = true;
                 return;
             }
 
             // A键
-            if (isInCircle(pos.x, pos.y, BTN_A.x, BTN_A.y, BTN_A.r)) {
+            if (isInCircle(pos.x, pos.y, BTN_A.x, BTN_A.y, BTN_A.r + 4)) {
                 keys['a'] = true;
                 return;
             }
-
             // B键
-            if (isInCircle(pos.x, pos.y, BTN_B.x, BTN_B.y, BTN_B.r)) {
+            if (isInCircle(pos.x, pos.y, BTN_B.x, BTN_B.y, BTN_B.r + 4)) {
                 keys['b'] = true;
                 return;
             }
-
-            // 跳跃键
-            if (isInCircle(pos.x, pos.y, BTN_JUMP.x, BTN_JUMP.y, BTN_JUMP.r)) {
+            // 跳跃
+            if (isInCircle(pos.x, pos.y, BTN_JUMP.x, BTN_JUMP.y, BTN_JUMP.r + 4)) {
                 keys['jump'] = true;
                 return;
             }
 
-            // 物品栏上箭头
-            if (isInCircle(pos.x, pos.y, INV_ARROW_UP.x, INV_ARROW_UP.y, INV_ARROW_UP.r)) {
+            // 方向键
+            if (isInCircle(pos.x, pos.y, DPAD.up.cx, DPAD.up.cy, DPAD.up.r + 4)) {
+                keys['up'] = true;
+                return;
+            }
+            if (isInCircle(pos.x, pos.y, DPAD.down.cx, DPAD.down.cy, DPAD.down.r + 4)) {
+                keys['down'] = true;
+                return;
+            }
+            if (isInCircle(pos.x, pos.y, DPAD.left.cx, DPAD.left.cy, DPAD.left.r + 4)) {
+                keys['left'] = true;
+                return;
+            }
+            if (isInCircle(pos.x, pos.y, DPAD.right.cx, DPAD.right.cy, DPAD.right.r + 4)) {
+                keys['right'] = true;
+                return;
+            }
+
+            // 物品栏
+            if (isInCircle(pos.x, pos.y, INV_ARROW_UP.x, INV_ARROW_UP.y, INV_ARROW_UP.r + 4)) {
                 selectedSlot = (selectedSlot - 1 + quickSlots.length) % quickSlots.length;
                 return;
             }
-
-            // 物品栏下箭头
-            if (isInCircle(pos.x, pos.y, INV_ARROW_DOWN.x, INV_ARROW_DOWN.y, INV_ARROW_DOWN.r)) {
-                selectedSlot = (selectedSlot + 1) % quickSlots.length;
-                return;
-            }
-
-            // 物品栏格子（点击打开背包——暂未实现完整背包界面）
-            if (isInRect(pos.x, pos.y, INV_SLOT.x, INV_SLOT.y, INV_SLOT.w, INV_SLOT.h)) {
-                // 简易切换：点击切换选中物品
+            if (isInCircle(pos.x, pos.y, INV_ARROW_DOWN.x, INV_ARROW_DOWN.y, INV_ARROW_DOWN.r + 4)) {
                 selectedSlot = (selectedSlot + 1) % quickSlots.length;
                 return;
             }
@@ -438,16 +469,17 @@
         canvas.addEventListener('pointermove', (e) => {
             if (!joystickActive) return;
             const pos = getTouchPos(e);
-            const dx = pos.x - joystickStartX;
-            const dy = pos.y - joystickStartY;
+            const dx = pos.x - JOYSTICK_CX;
+            const dy = pos.y - JOYSTICK_CY;
             const d = Math.sqrt(dx * dx + dy * dy);
-            const maxD = JOYSTICK_RADIUS - JOYSTICK_KNOB_R;
-            if (d > maxD) {
-                joystickDX = (dx / d) * maxD;
-                joystickDY = (dy / d) * maxD;
+
+            if (d < JOYSTICK_DEAD_ZONE) {
+                joystickDX = 0;
+                joystickDY = 0;
             } else {
-                joystickDX = dx;
-                joystickDY = dy;
+                const clampedD = Math.min(d, JOYSTICK_RADIUS);
+                joystickDX = (dx / d) * (clampedD / JOYSTICK_RADIUS);
+                joystickDY = (dy / d) * (clampedD / JOYSTICK_RADIUS);
             }
         });
 
@@ -457,10 +489,16 @@
                 joystickId = null;
                 joystickDX = 0;
                 joystickDY = 0;
+                cursorActive = false;
             }
+            // 释放所有按键
             keys['a'] = false;
             keys['b'] = false;
             keys['jump'] = false;
+            keys['up'] = false;
+            keys['down'] = false;
+            keys['left'] = false;
+            keys['right'] = false;
         });
 
         canvas.addEventListener('pointerleave', () => {
@@ -468,12 +506,17 @@
             joystickId = null;
             joystickDX = 0;
             joystickDY = 0;
+            cursorActive = false;
             keys['a'] = false;
             keys['b'] = false;
             keys['jump'] = false;
+            keys['up'] = false;
+            keys['down'] = false;
+            keys['left'] = false;
+            keys['right'] = false;
         });
 
-        // 键盘备用（PC调试）
+        // 键盘备用
         window.addEventListener('keydown', (e) => {
             switch (e.key.toLowerCase()) {
                 case 'arrowleft':
@@ -486,7 +529,7 @@
                     break;
                 case 'arrowup':
                 case 'w':
-                    keys['jump'] = true;
+                    keys['up'] = true;
                     break;
                 case 'arrowdown':
                 case 's':
@@ -515,7 +558,7 @@
                     break;
                 case 'arrowup':
                 case 'w':
-                    keys['jump'] = false;
+                    keys['up'] = false;
                     break;
                 case 'arrowdown':
                 case 's':
@@ -535,385 +578,13 @@
 
         // ==================== 游戏逻辑 ====================
         let lastBpress = 0;
-        let bPressCount = 0;
+        let lastApress = 0;
 
-        function update() {
-            // 移动输入
-            let moveX = 0;
-            if (joystickActive) {
-                moveX = joystickDX / (JOYSTICK_RADIUS - JOYSTICK_KNOB_R);
-            }
-            if (keys['left']) moveX = -1;
-            if (keys['right']) moveX = 1;
+        function updateCursor() {
+            if (cursorActive && (Math.abs(joystickDX) > 0.05 || Math.abs(joystickDY) > 0.05)) {
+                // 摇杆控制光标移动
+                const moveSpeed = 0.15;
+                let newCX = cursorTileX + joystickDX * moveSpeed;
+                let newCY = cursorTileY + joystickDY * moveSpeed;
 
-            velocityX = moveX * PLAYER_SPEED;
-
-            if (moveX > 0.1) facingRight = true;
-            if (moveX < -0.1) facingRight = false;
-
-            // 跳跃
-            if ((keys['jump'] || keys['jump']) && isOnGround) {
-                velocityY = JUMP_FORCE;
-                isOnGround = false;
-                keys['jump'] = false; // 防止连续跳
-            }
-
-            // 重力
-            velocityY += GRAVITY;
-            if (velocityY > 8) velocityY = 8;
-
-            // 水平移动
-            let newX = playerX + velocityX * 0.16;
-            const playerW = 0.8;
-            const playerH = 1.7;
-
-            if (!checkCollisionWorld(newX, playerY, playerW, playerH)) {
-                playerX = newX;
-            } else {
-                // 尝试半步
-                const halfX = playerX + (newX - playerX) * 0.3;
-                if (!checkCollisionWorld(halfX, playerY, playerW, playerH)) {
-                    playerX = halfX;
-                }
-                velocityX = 0;
-            }
-
-            // 垂直移动
-            let newY = playerY + velocityY * 0.16;
-            if (!checkCollisionWorld(playerX, newY, playerW, playerH)) {
-                playerY = newY;
-                isOnGround = false;
-            } else {
-                if (velocityY > 0) {
-                    isOnGround = true;
-                    // 掉落伤害
-                    if (velocityY > 5) {
-                        const dmg = Math.floor((velocityY - 5) * 8);
-                        hp = Math.max(0, hp - dmg);
-                    }
-                }
-                velocityY = 0;
-            }
-
-            // 边界
-            playerX = Math.max(0.1, Math.min(WORLD_W - 0.9, playerX));
-            playerY = Math.max(0, Math.min(WORLD_H - 2, playerY));
-
-            // B键万能操作
-            const now = Date.now();
-            if (keys['b']) {
-                if (now - lastBpress < 300) {
-                    bPressCount++;
-                } else {
-                    bPressCount = 1;
-                }
-                lastBpress = now;
-
-                if (bPressCount === 1) {
-                    handleBAction();
-                }
-                keys['b'] = false; // 单次触发
-            } else {
-                bPressCount = 0;
-            }
-
-            // 更新相机
-            updateCamera();
-        }
-
-        function handleBAction() {
-            const dirX = facingRight ? 1 : -1;
-            const targetX = Math.floor(playerX + dirX * 0.7);
-            const targetY = Math.floor(playerY + 0.5);
-            const tile = getTileAt(targetX, targetY);
-
-            if (isSolid(tile)) {
-                // 挖掘
-                if (tile === CRAFT_TABLE || tile === CHEST) {
-                    // 特殊方块暂不挖掘
-                    return;
-                }
-                const removed = removeTileWorld(targetX, targetY);
-                if (removed && tile !== AIR) {
-                    addToBackpack(tile, 1);
-                }
-            } else {
-                // 放置
-                const sel = getSelectedItem();
-                if (sel && isSolid(sel) && getBackpackCount(sel) > 0) {
-                    if (placeTileWorld(targetX, targetY, sel)) {
-                        removeFromBackpack(sel, 1);
-                    }
-                }
-            }
-        }
-
-        function removeTileWorld(tx, ty) {
-            // 直接改不了生成函数，我们用个缓存覆盖
-            if (!worldOverrides) worldOverrides = {};
-            const key = `${tx},${ty}`;
-            const original = getTileAt(tx, ty);
-            if (isSolid(original) && original !== CRAFT_TABLE) {
-                worldOverrides[key] = AIR;
-                return original;
-            }
-            return null;
-        }
-
-        function placeTileWorld(tx, ty, tileType) {
-            if (!worldOverrides) worldOverrides = {};
-            const key = `${tx},${ty}`;
-            const original = getTileAt(tx, ty);
-            if (!isSolid(original)) {
-                // 检查玩家不站在里面
-                const px = Math.floor(playerX);
-                const py = Math.floor(playerY);
-                if (tx === px && (ty === py || ty === py + 1)) return false;
-                worldOverrides[key] = tileType;
-                return true;
-            }
-            return false;
-        }
-
-        let worldOverrides = {};
-
-        function getTileAtWithOverride(x, y) {
-            const key = `${x},${y}`;
-            if (worldOverrides[key] !== undefined) return worldOverrides[key];
-            return getTileAt(x, y);
-        }
-
-        // 放置合成台（初始）
-        (function initCraftTable() {
-            const cx = Math.floor(WORLD_W / 2) - 10;
-            const cy = getSurfaceHeight(cx) - 1;
-            worldOverrides[`${cx},${cy}`] = CRAFT_TABLE;
-            worldOverrides[`${cx + 1},${cy}`] = CRAFT_TABLE;
-        })();
-
-        // ==================== 渲染 ====================
-        function drawTileOnScreen(tileType, sx, sy, size) {
-            if (tileType === AIR || tileType === null) return;
-            const color = TILE_COLORS[tileType];
-            if (!color) return;
-            ctx.fillStyle = color;
-            ctx.fillRect(sx, sy, size, size);
-
-            // 边框
-            ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-            ctx.lineWidth = 0.5;
-            ctx.strokeRect(sx, sy, size, size);
-
-            // 特殊纹理
-            if (tileType === CRAFT_TABLE) {
-                ctx.fillStyle = '#8B7355';
-                ctx.fillRect(sx + 2, sy + 2, size - 4, 2);
-                ctx.fillRect(sx + size / 2 - 1, sy + 4, 2, size - 6);
-            }
-            if (tileType === CHEST) {
-                ctx.fillStyle = '#F1C40F';
-                ctx.fillRect(sx + size / 2 - 2, sy + size / 2 - 1, 4, 3);
-            }
-            if (tileType === GRASS) {
-                ctx.fillStyle = '#66BB6A';
-                ctx.fillRect(sx, sy, size, 2);
-            }
-            if ([COPPER, IRON, SILVER, GOLD, DIAMOND, COAL].includes(tileType)) {
-                ctx.fillStyle = 'rgba(255,255,255,0.4)';
-                ctx.fillRect(sx + size * 0.3, sy + size * 0.3, size * 0.4, size * 0.4);
-            }
-        }
-
-        function render() {
-            ctx.clearRect(0, 0, W, H);
-
-            // 天空背景
-            const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-            skyGrad.addColorStop(0, '#4A90D9');
-            skyGrad.addColorStop(0.3, '#87CEEB');
-            skyGrad.addColorStop(0.7, '#5D4E37');
-            skyGrad.addColorStop(1, '#1A0E0A');
-            ctx.fillStyle = skyGrad;
-            ctx.fillRect(0, 0, W, H);
-
-            // 计算可见范围
-            const startTX = Math.max(0, Math.floor(cameraX));
-            const startTY = Math.max(0, Math.floor(cameraY));
-            const endTX = Math.min(WORLD_W, Math.ceil(cameraX + VIEW_TILES_X) + 1);
-            const endTY = Math.min(WORLD_H, Math.ceil(cameraY + VIEW_TILES_Y) + 1);
-
-            // 绘制方块
-            for (let ty = startTY; ty < endTY; ty++) {
-                for (let tx = startTX; tx < endTX; tx++) {
-                    const tile = getTileAtWithOverride(tx, ty);
-                    if (tile === AIR || tile === null) continue;
-                    const sx = (tx - cameraX) * TILE_SIZE;
-                    const sy = (ty - cameraY) * TILE_SIZE;
-                    drawTileOnScreen(tile, sx, sy, TILE_SIZE);
-                }
-            }
-
-            // 绘制玩家
-            const psx = (playerX - cameraX) * TILE_SIZE;
-            const psy = (playerY - cameraY) * TILE_SIZE;
-            const pW = TILE_SIZE * 0.8;
-            const pH = TILE_SIZE * 1.7;
-
-            // 身体
-            ctx.fillStyle = '#3F51B5';
-            ctx.fillRect(psx, psy + TILE_SIZE * 0.25, pW, pH - TILE_SIZE * 0.25);
-            // 头
-            ctx.fillStyle = '#FFCC80';
-            ctx.fillRect(psx - 1, psy - 1, pW + 2, TILE_SIZE * 0.6);
-            // 头发
-            ctx.fillStyle = '#5D4037';
-            ctx.fillRect(psx - 1, psy - 2, pW + 2, TILE_SIZE * 0.25);
-            // 眼睛
-            const eyeX = facingRight ? psx + pW - 4 : psx + 2;
-            ctx.fillStyle = '#000';
-            ctx.fillRect(eyeX, psy + 1, 2, 2);
-            // 腿
-            ctx.fillStyle = '#616161';
-            ctx.fillRect(psx + 2, psy + pH - TILE_SIZE * 0.35, pW * 0.35, TILE_SIZE * 0.35);
-            ctx.fillRect(psx + pW - pW * 0.35 - 2, psy + pH - TILE_SIZE * 0.35, pW * 0.35, TILE_SIZE * 0.35);
-
-            // ==================== UI ====================
-
-            // 血条
-            const barW = 80;
-            const barH = 8;
-            const barX = 12;
-            const barY = 12;
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
-            ctx.fillStyle = '#555';
-            ctx.fillRect(barX, barY, barW, barH);
-            const hpPercent = hp / maxHp;
-            const hpColor = hpPercent > 0.5 ? '#4CAF50' : hpPercent > 0.25 ? '#FF9800' : '#F44336';
-            ctx.fillStyle = hpColor;
-            ctx.fillRect(barX, barY, barW * hpPercent, barH);
-            ctx.fillStyle = '#FFF';
-            ctx.font = '8px "Courier New"';
-            ctx.textAlign = 'center';
-            ctx.fillText(`${hp}/${maxHp}`, barX + barW / 2, barY + barH - 1);
-
-            // 物品栏
-            const invX = INV_SLOT.x;
-            const invY = INV_SLOT.y;
-            const invS = INV_SLOT.w;
-
-            // 上箭头
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.beginPath();
-            ctx.arc(INV_ARROW_UP.x, INV_ARROW_UP.y, INV_ARROW_UP.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#FFF';
-            ctx.font = '12px "Courier New"';
-            ctx.textAlign = 'center';
-            ctx.fillText('▲', INV_ARROW_UP.x, INV_ARROW_UP.y + 4);
-
-            // 物品格子
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.strokeStyle = '#888';
-            ctx.lineWidth = 1.5;
-            ctx.fillRect(invX, invY, invS, invS);
-            ctx.strokeRect(invX, invY, invS, invS);
-
-            const selItem = getSelectedItem();
-            if (selItem && isSolid(selItem)) {
-                ctx.fillStyle = TILE_COLORS[selItem];
-                ctx.fillRect(invX + 3, invY + 3, invS - 6, invS - 6);
-                ctx.fillStyle = '#FFF';
-                ctx.font = '9px "Courier New"';
-                ctx.textAlign = 'right';
-                ctx.fillText(getBackpackCount(selItem), invX + invS - 3, invY + invS - 3);
-            } else if (selItem === null) {
-                ctx.fillStyle = '#FFF';
-                ctx.font = '14px "Courier New"';
-                ctx.textAlign = 'center';
-                ctx.fillText('✊', invX + invS / 2, invY + invS / 2 + 5);
-            }
-
-            // 下箭头
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.beginPath();
-            ctx.arc(INV_ARROW_DOWN.x, INV_ARROW_DOWN.y, INV_ARROW_DOWN.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#FFF';
-            ctx.fillText('▼', INV_ARROW_DOWN.x, INV_ARROW_DOWN.y + 4);
-
-            // 虚拟摇杆
-            ctx.fillStyle = 'rgba(255,255,255,0.15)';
-            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(JOYSTICK_CX, JOYSTICK_CY, JOYSTICK_RADIUS, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-
-            const knobX = JOYSTICK_CX + joystickDX;
-            const knobY = JOYSTICK_CY + joystickDY;
-            ctx.fillStyle = 'rgba(255,255,255,0.6)';
-            ctx.beginPath();
-            ctx.arc(knobX, knobY, JOYSTICK_KNOB_R, 0, Math.PI * 2);
-            ctx.fill();
-
-            // 跳跃按钮
-            ctx.fillStyle = 'rgba(255,255,255,0.2)';
-            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(BTN_JUMP.x, BTN_JUMP.y, BTN_JUMP.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#FFF';
-            ctx.font = 'bold 14px "Courier New"';
-            ctx.textAlign = 'center';
-            ctx.fillText('跳', BTN_JUMP.x, BTN_JUMP.y + 5);
-
-            // A键
-            ctx.fillStyle = 'rgba(76,175,80,0.3)';
-            ctx.strokeStyle = 'rgba(76,175,80,0.7)';
-            ctx.beginPath();
-            ctx.arc(BTN_A.x, BTN_A.y, BTN_A.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#4CAF50';
-            ctx.font = 'bold 16px "Courier New"';
-            ctx.fillText('A', BTN_A.x, BTN_A.y + 6);
-
-            // B键
-            ctx.fillStyle = 'rgba(244,67,54,0.3)';
-            ctx.strokeStyle = 'rgba(244,67,54,0.7)';
-            ctx.beginPath();
-            ctx.arc(BTN_B.x, BTN_B.y, BTN_B.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#F44336';
-            ctx.font = 'bold 14px "Courier New"';
-            ctx.fillText('B', BTN_B.x, BTN_B.y + 5);
-
-            // 合成台提示
-            const ctxDist = dist(playerX, playerY, Math.floor(WORLD_W / 2) - 9.5, getSurfaceHeight(Math.floor(WORLD_W / 2) - 10) - 0.5);
-            if (ctxDist < 4) {
-                ctx.fillStyle = 'rgba(255,255,255,0.8)';
-                ctx.font = '10px "Courier New"';
-                ctx.textAlign = 'center';
-                ctx.fillText('按 A 打开合成台', W / 2, H - 20);
-            }
-        }
-
-        // ==================== 主循环 ====================
-        function gameLoop() {
-            update();
-            render();
-            requestAnimationFrame(gameLoop);
-        }
-
-        console.log('🚀 丐版泰拉瑞亚启动！9 Pro 尺寸 336×480');
-        console.log('操作：左下摇杆移动 | 右下[跳]跳跃 | [A]交互 | [B]挖/放');
-        console.log('键盘备用：方向键移动 | 空格跳跃 | J=B键 | K=A键');
-        gameLoop();
-    </script>
-</body>
-</html>
+     
