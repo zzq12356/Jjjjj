@@ -1,908 +1,170 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
+<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>手环9 Pro · 丐版泰拉瑞亚</title>
-<style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #1a1a2e;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            font-family: 'Courier New', monospace;
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; font-family: 'Courier New', monospace;
             overflow: hidden;
-            touch-action: none;
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
-            user-select: none;
+            touch-action: none; -webkit-touch-callout: none;
+            -webkit-user-select: none; user-select: none;
         }
         .band-frame {
-            width: 336px;
-            height: 480px;
-            background: #0d0d0d;
-            border-radius: 32px;
-            position: relative;
-            overflow: hidden;
-            box-shadow: 0 0 40px rgba(0, 0, 0, 0.8), inset 0 0 0 3px #2a2a2a;
+            width: 336px; height: 480px; background: #0d0d0d;
+            border-radius: 32px; position: relative; overflow: hidden;
+            box-shadow: 0 0 40px rgba(0,0,0,0.8), inset 0 0 0 3px #2a2a2a;
         }
-        canvas {
-            display: block;
-            width: 336px;
-            height: 480px;
-            border-radius: 32px;
-        }
-</style>
-  </head>
-  <body>
-    <div class="band-frame">
-	  <canvas id="game"></canvas>
-    </div>
-
+        canvas { display: block; width: 336px; height: 480px; border-radius: 32px; }
+    </style>
+</head>
+<body>
+<div class="band-frame"><canvas id="game"></canvas></div>
 <script>
-        // ==================== 游戏主程序 ====================
-        const canvas = document.getElementById('game');
-        const ctx = canvas.getContext('2d');
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const W=336,H=480;canvas.width=W;canvas.height=H;
+const TILE_SIZE=12,WORLD_W=2000,WORLD_H=200;
+const VIEW_TILES_X=Math.ceil(W/TILE_SIZE),VIEW_TILES_Y=Math.ceil(H/TILE_SIZE);
+const GRAVITY=0.4,PLAYER_SPEED=1.8,JUMP_FORCE=-4.5,SEED=12345,CURSOR_MAX_DIST=3;
+const AIR=0,DIRT=1,STONE=2,GRASS=3,WOOD=4,LEAF=5,COPPER=6,IRON=7,SILVER=8,GOLD=9,DIAMOND=10,COAL=11,CRAFT_TABLE=12,CHEST=13,WORKBENCH=14;
+const TILE_COLORS={[AIR]:null,[DIRT]:'#8B5E3C',[STONE]:'#7F8C8D',[GRASS]:'#4CAF50',[WOOD]:'#A0522D',[LEAF]:'#2E7D32',[COPPER]:'#E67E22',[IRON]:'#95A5A6',[SILVER]:'#BDC3C7',[GOLD]:'#F1C40F',[DIAMOND]:'#3498DB',[COAL]:'#2C3E50',[CRAFT_TABLE]:'#D4A574',[CHEST]:'#C0392B',[WORKBENCH]:'#DEB887'};
+
+function hash(x,y){let h=SEED+x*374761393+y*668265263;h=(h^(h>>13))*1274126177;return(h^(h>>16))/2147483648;}
+function smoothNoise(x,y){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy,sx=fx*fx*(3-2*fx),sy=fy*fy*(3-2*fy),n00=hash(ix,iy),n10=hash(ix+1,iy),n01=hash(ix,iy+1),n11=hash(ix+1,iy+1);return n00+(n10-n00)*sx+(n01-n00)*sy+(n11-n10-n01+n00)*sx*sy;}
+function fbm(x,y,o=3){let v=0,a=0.5,f=1,m=0;for(let i=0;i<o;i++){v+=smoothNoise(x*f,y*f)*a;m+=a;a*=0.5;f*=2;}return v/m;}
+
+function getSurfaceHeight(x){let h=60;h+=fbm(x*0.008,0,4)*25;h+=fbm(x*0.03,100,2)*10;h+=Math.sin(x/WORLD_W*Math.PI*3)*8;h+=Math.sin(x/WORLD_W*Math.PI*7)*4;return Math.floor(h);}
+function getCaveNoise(x,y){const df=(y-60)/140;let v=fbm(x*0.06,y*0.06,3)+fbm(x*0.15,y*0.15,2)*0.3+Math.sin(y*0.02)*0.15+Math.cos(x*0.04)*0.1;if(y<65)v+=0.6;if(df>0.6)v-=df*0.4;return v;}
+function getTileAt(x,y){if(x<0||x>=WORLD_W||y<0||y>=WORLD_H)return STONE;const s=getSurfaceHeight(x);if(y<s-1){if(y>=s-8&&y<s-1){const bx=Math.floor(x/6)*6+3,dx=Math.abs(x-bx),th=3+Math.floor(hash(bx,0)*4);if(dx<1&&y>=s-th-1&&y<s-1){if(dx<0.6&&y>=s-th-1&&y<s-1)return WOOD;if(y>=s-th-1&&y<s)return LEAF;}if(dx<2&&y>=s-th&&y<s-1&&hash(x,y)>0.3&&!(dx<1&&y>=s-th-1))return LEAF;}return AIR;}if(y===s-1)return GRASS;if(y>=s&&y<=s+3)return DIRT;const cv=getCaveNoise(x,y),isC=cv>0.45;if(isC&&y>s+3)return AIR;if(!isC&&y>s+3){const on=fbm(x*0.12,y*0.12,2),d=y-s;if(d>80&&on>0.72)return DIAMOND;if(d>60&&on>0.62)return GOLD;if(d>40&&on>0.55)return SILVER;if(d>25&&on>0.48)return IRON;if(d>15&&on>0.40)return COPPER;if(d>10&&on<-0.55)return COAL;}if(y>s+80&&!isC)return STONE;if(y>s+6&&!isC)return hash(x,y)<0.75?STONE:DIRT;if(!isC&&y>=s)return DIRT;return STONE;}
+
+let worldOverrides={};
+function getTileAtWithOverride(x,y){const k=x+','+y;return worldOverrides.hasOwnProperty(k)?worldOverrides[k]:getTileAt(x,y);}
+function setTileOverride(x,y,t){worldOverrides[x+','+y]=t;}
+function isSolid(t){return t!==AIR&&t!==null;}
+
+function tryChopTree(tx,ty){if(getTileAtWithOverride(tx,ty)!==WOOD)return null;let ry=ty;while(ry<WORLD_H-1&&getTileAtWithOverride(tx,ry+1)===WOOD)ry++;if(!isSolid(getTileAtWithOverride(tx,ry+1))&&getTileAtWithOverride(tx,ry+1)!==GRASS)return null;let topY=ry;while(topY>0&&getTileAtWithOverride(tx,topY-1)===WOOD)topY--;let wc=0;const tr=[];for(let y=topY;y<=ry;y++){if(getTileAtWithOverride(tx,y)===WOOD){if(y>=ty)wc++;tr.push({x:tx,y});}}
+const lq=[],al=[],vis={};for(let dy=-3;dy<=1;dy++)for(let dx=-2;dx<=2;dx++){const lx=tx+dx,ly=topY+dy;if(getTileAtWithOverride(lx,ly)===LEAF)lq.push({x:lx,y:ly});}
+while(lq.length){const l=lq.pop(),k=l.x+','+l.y;if(vis[k])continue;vis[k]=true;if(getTileAtWithOverride(l.x,l.y)===LEAF){al.push(l);for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=l.x+dx,ny=l.y+dy,nk=nx+','+ny;if(!vis[nk]&&getTileAtWithOverride(nx,ny)===LEAF)lq.push({x:nx,y:ny});}}}
+for(const p of tr)setTileOverride(p.x,p.y,AIR);for(const p of al)setTileOverride(p.x,p.y,AIR);return wc;}
+
+let playerX=WORLD_W/2,playerY=getSurfaceHeight(Math.floor(playerX))-3,velocityX=0,velocityY=0,isOnGround=false,facingRight=true;
+let cursorTileX=Math.floor(playerX),cursorTileY=Math.floor(playerY),cursorActive=false;
+let hp=100;const maxHp=100;
+const backpack={};let selectedSlot=0;const quickSlots=[DIRT,STONE,WOOD,COPPER,null];
+function addToBackpack(t,c=1){if(!t||t===AIR)return false;if(!backpack[t])backpack[t]=0;backpack[t]+=c;return true;}
+function removeFromBackpack(t,c=1){if(!backpack[t]||backpack[t]<c)return false;backpack[t]-=c;if(backpack[t]<=0)delete backpack[t];return true;}
+function getBackpackCount(t){return backpack[t]||0;}
+function getSelectedItem(){return quickSlots[selectedSlot];}
+addToBackpack(DIRT,20);addToBackpack(STONE,10);addToBackpack(WOOD,5);
+
+function checkCollisionWorld(x,y,w,h){const l=Math.floor(x),r=Math.floor(x+w-0.01),t=Math.floor(y),b=Math.floor(y+h-0.01);for(let cy=t;cy<=b;cy++)for(let cx=l;cx<=r;cx++){if(cx>=0&&cx<WORLD_W&&cy>=0&&cy<WORLD_H){if(isSolid(getTileAtWithOverride(cx,cy)))return true;}else if(cx<0||cx>=WORLD_W||cy>=WORLD_H)return true;}return false;}
+
+let cameraX=playerX-VIEW_TILES_X/2,cameraY=playerY-VIEW_TILES_Y/2;
+function updateCamera(){const tx=playerX-VIEW_TILES_X/2,ty=playerY-VIEW_TILES_Y/2;cameraX+=(tx-cameraX)*0.15;cameraY+=(ty-cameraY)*0.15;cameraX=Math.max(0,Math.min(WORLD_W-VIEW_TILES_X,cameraX));cameraY=Math.max(0,Math.min(WORLD_H-VIEW_TILES_Y,cameraY));}
+
+const keys={up:false,down:false,left:false,right:false,jump:false,a:false,b:false,backpack:false};
+let joystickActive=false,joystickId=null,joystickDX=0,joystickDY=0,jumpPressed=false;
+const JOYSTICK_CX=280,JOYSTICK_CY=410,JOYSTICK_RADIUS=38,JOYSTICK_KNOB_R=14,JOYSTICK_DEAD_ZONE=6,BTN_R=13;
+const BTN_A_POS={x:JOYSTICK_CX-30,y:JOYSTICK_CY-48,r:BTN_R};
+const BTN_JUMP_POS={x:JOYSTICK_CX+32,y:JOYSTICK_CY-38,r:BTN_R};
+const BTN_B_POS={x:JOYSTICK_CX-42,y:JOYSTICK_CY-10,r:BTN_R};
+const DPAD={up:{cx:52,cy:392,r:16},down:{cx:52,cy:444,r:16},left:{cx:24,cy:418,r:16},right:{cx:80,cy:418,r:16}};
+const INV_X=6,INV_Y=120,INV_SIZE=34;
+const INV_ARROW_UP={x:INV_X+INV_SIZE/2,y:INV_Y-16,r:12};
+const INV_ARROW_DOWN={x:INV_X+INV_SIZE/2,y:INV_Y+INV_SIZE+16,r:12};
+const BACKPACK_BTN={x:INV_X,y:INV_Y-50,w:INV_SIZE,h:20};
+
+function getTouchPos(e){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};}
+function dist(x1,y1,x2,y2){const dx=x1-x2,dy=y1-y2;return Math.sqrt(dx*dx+dy*dy);}
+function isInCircle(px,py,cx,cy,r){return dist(px,py,cx,cy)<=r;}
+
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();const p=getTouchPos(e);
+if(dist(p.x,p.y,JOYSTICK_CX,JOYSTICK_CY)<JOYSTICK_RADIUS+10){joystickActive=true;joystickId=e.pointerId;joystickDX=0;joystickDY=0;cursorActive=true;return;}
+if(p.x>=BACKPACK_BTN.x&&p.x<=BACKPACK_BTN.x+BACKPACK_BTN.w&&p.y>=BACKPACK_BTN.y&&p.y<=BACKPACK_BTN.y+BACKPACK_BTN.h){keys.backpack=true;return;}
+if(isInCircle(p.x,p.y,BTN_A_POS.x,BTN_A_POS.y,BTN_A_POS.r+4)){keys.a=true;return;}
+if(isInCircle(p.x,p.y,BTN_B_POS.x,BTN_B_POS.y,BTN_B_POS.r+4)){keys.b=true;return;}
+if(isInCircle(p.x,p.y,BTN_JUMP_POS.x,BTN_JUMP_POS.y,BTN_JUMP_POS.r+4)){keys.jump=true;return;}
+if(isInCircle(p.x,p.y,DPAD.up.cx,DPAD.up.cy,DPAD.up.r+4)){keys.up=true;return;}
+if(isInCircle(p.x,p.y,DPAD.down.cx,DPAD.down.cy,DPAD.down.r+4)){keys.down=true;return;}
+if(isInCircle(p.x,p.y,DPAD.left.cx,DPAD.left.cy,DPAD.left.r+4)){keys.left=true;return;}
+if(isInCircle(p.x,p.y,DPAD.right.cx,DPAD.right.cy,DPAD.right.r+4)){keys.right=true;return;}
+if(isInCircle(p.x,p.y,INV_ARROW_UP.x,INV_ARROW_UP.y,INV_ARROW_UP.r+4)){selectedSlot=(selectedSlot-1+quickSlots.length)%quickSlots.length;return;}
+if(isInCircle(p.x,p.y,INV_ARROW_DOWN.x,INV_ARROW_DOWN.y,INV_ARROW_DOWN.r+4)){selectedSlot=(selectedSlot+1)%quickSlots.length;return;}});
+
+canvas.addEventListener('pointermove',e=>{if(!joystickActive)return;const p=getTouchPos(e),dx=p.x-JOYSTICK_CX,dy=p.y-JOYSTICK_CY,d=Math.sqrt(dx*dx+dy*dy);if(d<JOYSTICK_DEAD_ZONE){joystickDX=0;joystickDY=0;}else{joystickDX=dx/d;joystickDY=dy/d;}});
+
+function releaseAll(){joystickActive=false;joystickId=null;joystickDX=0;joystickDY=0;cursorActive=false;keys.up=keys.down=keys.left=keys.right=false;keys.a=keys.b=keys.jump=false;keys.backpack=false;}
+canvas.addEventListener('pointerup',e=>{if(joystickActive&&e.pointerId===joystickId)releaseAll();keys.a=keys.b=keys.jump=false;keys.up=keys.down=keys.left=keys.right=false;keys.backpack=false;});
+canvas.addEventListener('pointerleave',releaseAll);
+canvas.addEventListener('pointercancel',releaseAll);
+window.addEventListener('keydown',e=>{switch(e.key){case'ArrowLeft':keys.left=true;e.preventDefault();break;case'ArrowRight':keys.right=true;e.preventDefault();break;case'ArrowUp':keys.up=true;e.preventDefault();break;case'ArrowDown':keys.down=true;e.preventDefault();break;case' ':keys.jump=true;e.preventDefault();break;case'j':case'J':keys.b=true;break;case'k':case'K':keys.a=true;break;}});
+window.addEventListener('keyup',e=>{switch(e.key){case'ArrowLeft':keys.left=false;break;case'ArrowRight':keys.right=false;break;case'ArrowUp':keys.up=false;break;case'ArrowDown':keys.down=false;break;case' ':keys.jump=false;break;case'j':case'J':keys.b=false;break;case'k':case'K':keys.a=false;break;}});
+
+(function(){const cx=Math.floor(WORLD_W/2)-10,cy=getSurfaceHeight(cx)-1;setTileOverride(cx,cy,CRAFT_TABLE);setTileOverride(cx+1,cy,CRAFT_TABLE);})();
+
+let lastBtime=0,lastAtime=0;
+function updateCursor(){if(cursorActive&&(Math.abs(joystickDX)>0.05||Math.abs(joystickDY)>0.05)){const s=0.2;let nx=cursorTileX+joystickDX*s,ny=cursorTileY+joystickDY*s;const ptx=Math.floor(playerX),pty=Math.floor(playerY),dx=nx-ptx,dy=ny-pty,d=Math.sqrt(dx*dx+dy*dy);if(d>CURSOR_MAX_DIST){nx=ptx+(dx/d)*CURSOR_MAX_DIST;ny=pty+(dy/d)*CURSOR_MAX_DIST;}cursorTileX=Math.round(nx);cursorTileY=Math.round(ny);}else if(!cursorActive){cursorTileX=Math.floor(playerX);cursorTileY=Math.floor(playerY);}cursorTileX=Math.max(0,Math.min(WORLD_W-1,cursorTileX));cursorTileY=Math.max(0,Math.min(WORLD_H-1,cursorTileY));}
+
+function update(){let mx=0;if(keys.left)mx=-1;if(keys.right)mx=1;velocityX=mx*PLAYER_SPEED;if(mx>0.05)facingRight=true;if(mx<-0.05)facingRight=false;
+if(keys.jump&&isOnGround&&!jumpPressed){velocityY=JUMP_FORCE;isOnGround=false;jumpPressed=true;}if(!keys.jump)jumpPressed=false;
+velocityY+=GRAVITY;if(velocityY>8)velocityY=8;
+const pw=0.8,ph=1.7;let nx=playerX+velocityX*0.16;if(!checkCollisionWorld(nx,playerY,pw,ph))playerX=nx;else{const hx=playerX+(nx-playerX)*0.3;if(!checkCollisionWorld(hx,playerY,pw,ph))playerX=hx;velocityX=0;}
+let ny=playerY+velocityY*0.16;if(!checkCollisionWorld(playerX,ny,pw,ph)){playerY=ny;isOnGround=false;}else{if(velocityY>0){isOnGround=true;if(velocityY>5)hp=Math.max(0,hp-Math.floor((velocityY-5)*8));}velocityY=0;}
+playerX=Math.max(0.1,Math.min(WORLD_W-0.9,playerX));playerY=Math.max(0,Math.min(WORLD_H-2,playerY));
+updateCamera();updateCursor();
+const now=Date.now();
+if(keys.b&&now-lastBtime>250){const tx=cursorTileX,ty=cursorTileY,ptx=Math.floor(playerX),pty=Math.floor(playerY);if(Math.abs(tx-ptx)+Math.abs(ty-pty)<=CURSOR_MAX_DIST+1){const t=getTileAtWithOverride(tx,ty);if(isSolid(t)){if(t===WOOD){const wc=tryChopTree(tx,ty);if(wc!==null&&wc>0)addToBackpack(WOOD,wc);else if(wc===null){setTileOverride(tx,ty,AIR);addToBackpack(WOOD,1);}}else if(t!==CRAFT_TABLE&&t!==CHEST&&t!==WORKBENCH){setTileOverride(tx,ty,AIR);addToBackpack(t,1);}}else{const sel=getSelectedItem();if(sel&&isSolid(sel)&&getBackpackCount(sel)>0){if(!(tx===ptx&&(ty===pty||ty===pty+1))){setTileOverride(tx,ty,sel);removeFromBackpack(sel,1);}}}}lastBtime=now;}
+if(keys.a&&now-lastAtime>400){const ptx=Math.floor(playerX),pty=Math.floor(playerY);let nc=false;for(let dy=-2;dy<=2&&!nc;dy++)for(let dx=-2;dx<=2&&!nc;dx++){const t=getTileAtWithOverride(ptx+dx,pty+dy);if(t===CRAFT_TABLE||t===WORKBENCH)nc=true;}if(nc&&getBackpackCount(WOOD)>=1){removeFromBackpack(WOOD,1);addToBackpack(DIRT,2);}lastAtime=now;}
+if(keys.backpack){keys.backpack=false;console.log('打开背包（界面待实现）');}}
+
+function render(){ctx.clearRect(0,0,W,H);
+const sg=ctx.createLinearGradient(0,0,0,H);sg.addColorStop(0,'#4A90D9');sg.addColorStop(0.3,'#87CEEB');sg.addColorStop(0.7,'#5D4E37');sg.addColorStop(1,'#1A0E0A');ctx.fillStyle=sg;ctx.fillRect(0,0,W,H);
+const sTX=Math.max(0,Math.floor(cameraX)),sTY=Math.max(0,Math.floor(cameraY)),eTX=Math.min(WORLD_W,Math.ceil(cameraX+VIEW_TILES_X)+1),eTY=Math.min(WORLD_H,Math.ceil(cameraY+VIEW_TILES_Y)+1);
+for(let ty=sTY;ty<eTY;ty++)for(let tx=sTX;tx<eTX;tx++){const tile=getTileAtWithOverride(tx,ty);if(tile===AIR||tile===null)continue;const sx=(tx-cameraX)*TILE_SIZE,sy=(ty-cameraY)*TILE_SIZE,color=TILE_COLORS[tile];if(!color)continue;ctx.fillStyle=color;ctx.fillRect(sx,sy,TILE_SIZE,TILE_SIZE);ctx.strokeStyle='rgba(0,0,0,0.2)';ctx.lineWidth=0.5;ctx.strokeRect(sx,sy,TILE_SIZE,TILE_SIZE);
+if(tile===CRAFT_TABLE||tile===WORKBENCH){ctx.fillStyle='#8B7355';ctx.fillRect(sx+2,sy+2,TILE_SIZE-4,2);ctx.fillRect(sx+TILE_SIZE/2-1,sy+4,2,TILE_SIZE-6);}
+if(tile===GRASS){ctx.fillStyle='#66BB6A';ctx.fillRect(sx,sy,TILE_SIZE,2);}
+if([COPPER,IRON,SILVER,GOLD,DIAMOND,COAL].includes(tile)){ctx.fillStyle='rgba(255,255,255,0.4)';ctx.fillRect(sx+TILE_SIZE*0.3,sy+TILE_SIZE*0.3,TILE_SIZE*0.4,TILE_SIZE*0.4);}}
 
-        const W = 336;
-        const H = 480;
-        canvas.width = W;
-        canvas.height = H;
+const hsx=(cursorTileX-cameraX)*TILE_SIZE,hsy=(cursorTileY-cameraY)*TILE_SIZE;ctx.strokeStyle='rgba(255,255,255,0.7)';ctx.lineWidth=1.5;ctx.strokeRect(hsx,hsy,TILE_SIZE,TILE_SIZE);
+const csx=(cursorTileX-cameraX)*TILE_SIZE+TILE_SIZE/2,csy=(cursorTileY-cameraY)*TILE_SIZE+TILE_SIZE/2,cl=TILE_SIZE*0.25,ciw=1.5,cow=ciw+2;
+ctx.strokeStyle='#000';ctx.lineWidth=cow;ctx.beginPath();ctx.moveTo(csx-cl,csy);ctx.lineTo(csx+cl,csy);ctx.stroke();ctx.beginPath();ctx.moveTo(csx,csy-cl);ctx.lineTo(csx,csy+cl);ctx.stroke();
+ctx.strokeStyle='#FFF';ctx.lineWidth=ciw;ctx.beginPath();ctx.moveTo(csx-cl,csy);ctx.lineTo(csx+cl,csy);ctx.stroke();ctx.beginPath();ctx.moveTo(csx,csy-cl);ctx.lineTo(csx,csy+cl);ctx.stroke();
 
-        // ==================== 常量 ====================
-        const TILE_SIZE = 12;
-        const WORLD_W = 2000;
-        const WORLD_H = 200;
-        const VIEW_TILES_X = Math.ceil(W / TILE_SIZE);
-        const VIEW_TILES_Y = Math.ceil(H / TILE_SIZE);
-        const GRAVITY = 0.4;
-        const PLAYER_SPEED = 1.8;
-        const JUMP_FORCE = -4.5;
-        const SEED = 12345;
-        const CURSOR_MAX_DIST = 3;
+const psx=(playerX-cameraX)*TILE_SIZE,psy=(playerY-cameraY)*TILE_SIZE,pW=TILE_SIZE*0.8,pH=TILE_SIZE*1.7;
+ctx.fillStyle='#3F51B5';ctx.fillRect(psx,psy+TILE_SIZE*0.25,pW,pH-TILE_SIZE*0.25);
+ctx.fillStyle='#FFCC80';ctx.fillRect(psx-1,psy-1,pW+2,TILE_SIZE*0.6);
+ctx.fillStyle='#5D4037';ctx.fillRect(psx-1,psy-2,pW+2,TILE_SIZE*0.25);
+const eyeX=facingRight?psx+pW-4:psx+2;ctx.fillStyle='#000';ctx.fillRect(eyeX,psy+1,2,2);
+ctx.fillStyle='#616161';ctx.fillRect(psx+2,psy+pH-TILE_SIZE*0.35,pW*0.35,TILE_SIZE*0.35);ctx.fillRect(psx+pW-pW*0.35-2,psy+pH-TILE_SIZE*0.35,pW*0.35,TILE_SIZE*0.35);
 
-        const AIR = 0;
-        const DIRT = 1;
-        const STONE = 2;
-        const GRASS = 3;
-        const WOOD = 4;
-        const LEAF = 5;
-        const COPPER = 6;
-        const IRON = 7;
-        const SILVER = 8;
-        const GOLD = 9;
-        const DIAMOND = 10;
-        const COAL = 11;
-        const CRAFT_TABLE = 12;
-        const CHEST = 13;
-        const WORKBENCH = 14;
+const barW=80,barH=8,barX=12,barY=10;ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(barX-1,barY-1,barW+2,barH+2);ctx.fillStyle='#555';ctx.fillRect(barX,barY,barW,barH);const hpP=hp/maxHp;ctx.fillStyle=hpP>0.5?'#4CAF50':hpP>0.25?'#FF9800':'#F44336';ctx.fillRect(barX,barY,barW*hpP,barH);ctx.fillStyle='#FFF';ctx.font='7px "Courier New"';ctx.textAlign='center';ctx.fillText(hp+'/'+maxHp,barX+barW/2,barY+barH-1);
 
-        const TILE_COLORS = {
-            [AIR]: null,
-            [DIRT]: '#8B5E3C',
-            [STONE]: '#7F8C8D',
-            [GRASS]: '#4CAF50',
-            [WOOD]: '#A0522D',
-            [LEAF]: '#2E7D32',
-            [COPPER]: '#E67E22',
-            [IRON]: '#95A5A6',
-            [SILVER]: '#BDC3C7',
-            [GOLD]: '#F1C40F',
-            [DIAMOND]: '#3498DB',
-            [COAL]: '#2C3E50',
-            [CRAFT_TABLE]: '#D4A574',
-            [CHEST]: '#C0392B',
-            [WORKBENCH]: '#DEB887'
-        };
+const bpX=BACKPACK_BTN.x,bpY=BACKPACK_BTN.y,bpW=BACKPACK_BTN.w,bpH=BACKPACK_BTN.h;ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(bpX,bpY,bpW,bpH);ctx.strokeStyle='#888';ctx.lineWidth=1;ctx.strokeRect(bpX,bpY,bpW,bpH);ctx.fillStyle='#FFF';ctx.font='8px "Courier New"';ctx.textAlign='center';ctx.fillText('背包',bpX+bpW/2,bpY+bpH/2+3);
 
-        const TILE_NAMES = {
-            [DIRT]: '泥土', [STONE]: '石头', [GRASS]: '草方块',
-            [WOOD]: '木头', [LEAF]: '树叶', [COPPER]: '铜矿',
-            [IRON]: '铁矿', [SILVER]: '银矿', [GOLD]: '金矿',
-            [DIAMOND]: '钻石', [COAL]: '煤炭', [CRAFT_TABLE]: '合成台',
-            [CHEST]: '箱子', [WORKBENCH]: '工作台'
-        };
+const ivX=INV_X,ivY=INV_Y,ivS=INV_SIZE;ctx.fillStyle='rgba(0,0,0,0.5)';ctx.beginPath();ctx.arc(INV_ARROW_UP.x,INV_ARROW_UP.y,INV_ARROW_UP.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#FFF';ctx.font='10px "Courier New"';ctx.textAlign='center';ctx.fillText('▲',INV_ARROW_UP.x,INV_ARROW_UP.y+3);
+ctx.fillStyle='rgba(0,0,0,0.6)';ctx.strokeStyle='#888';ctx.lineWidth=1.5;ctx.fillRect(ivX,ivY,ivS,ivS);ctx.strokeRect(ivX,ivY,ivS,ivS);const sel=getSelectedItem();if(sel&&isSolid(sel)){ctx.fillStyle=TILE_COLORS[sel];ctx.fillRect(ivX+3,ivY+3,ivS-6,ivS-6);ctx.fillStyle='#FFF';ctx.font='8px "Courier New"';ctx.textAlign='right';ctx.fillText(getBackpackCount(sel),ivX+ivS-2,ivY+ivS-2);}else if(sel===null){ctx.fillStyle='#FFF';ctx.font='12px "Courier New"';ctx.textAlign='center';ctx.fillText('✊',ivX+ivS/2,ivY+ivS/2+4);}
+ctx.fillStyle='rgba(0,0,0,0.5)';ctx.beginPath();ctx.arc(INV_ARROW_DOWN.x,INV_ARROW_DOWN.y,INV_ARROW_DOWN.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#FFF';ctx.fillText('▼',INV_ARROW_DOWN.x,INV_ARROW_DOWN.y+3);
 
-        // ==================== 噪声函数 ====================
-        function hash(x, y) {
-            let h = SEED + x * 374761393 + y * 668265263;
-            h = (h ^ (h >> 13)) * 1274126177;
-            return (h ^ (h >> 16)) / 2147483648;
-        }
+function dd(cx,cy,r,l){ctx.fillStyle='rgba(255,255,255,0.15)';ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle='#FFF';ctx.font='bold 10px "Courier New"';ctx.textAlign='center';ctx.fillText(l,cx,cy+4);}
+dd(DPAD.up.cx,DPAD.up.cy,DPAD.up.r,'▲');dd(DPAD.down.cx,DPAD.down.cy,DPAD.down.r,'▼');dd(DPAD.left.cx,DPAD.left.cy,DPAD.left.r,'◀');dd(DPAD.right.cx,DPAD.right.cy,DPAD.right.r,'▶');
 
-        function smoothNoise(x, y) {
-            const ix = Math.floor(x);
-            const iy = Math.floor(y);
-            const fx = x - ix;
-            const fy = y - iy;
-            const sx = fx * fx * (3 - 2 * fx);
-            const sy = fy * fy * (3 - 2 * fy);
-            const n00 = hash(ix, iy);
-            const n10 = hash(ix + 1, iy);
-            const n01 = hash(ix, iy + 1);
-            const n11 = hash(ix + 1, iy + 1);
-            const nx0 = n00 + (n10 - n00) * sx;
-            const nx1 = n01 + (n11 - n01) * sx;
-            return nx0 + (nx1 - nx0) * sy;
-        }
+ctx.fillStyle='rgba(255,255,255,0.12)';ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(JOYSTICK_CX,JOYSTICK_CY,JOYSTICK_RADIUS,0,Math.PI*2);ctx.fill();ctx.stroke();
+const kx=JOYSTICK_CX+joystickDX*(JOYSTICK_RADIUS-JOYSTICK_KNOB_R),ky=JOYSTICK_CY+joystickDY*(JOYSTICK_RADIUS-JOYSTICK_KNOB_R);ctx.fillStyle='rgba(255,255,255,0.5)';ctx.beginPath();ctx.arc(kx,ky,JOYSTICK_KNOB_R,0,Math.PI*2);ctx.fill();
+ctx.strokeStyle='rgba(255,255,255,0.2)';ctx.lineWidth=1;ctx.beginPath();ctx.arc(JOYSTICK_CX,JOYSTICK_CY,JOYSTICK_DEAD_ZONE,0,Math.PI*2);ctx.stroke();
 
-        function fbm(x, y, octaves = 3) {
-            let val = 0;
-            let amp = 0.5;
-            let freq = 1;
-            let max = 0;
-            for (let i = 0; i < octaves; i++) {
-                val += smoothNoise(x * freq, y * freq) * amp;
-                max += amp;
-                amp *= 0.5;
-                freq *= 2;
-            }
-            return val / max;
-        }
+ctx.fillStyle='rgba(76,175,80,0.3)';ctx.strokeStyle='rgba(76,175,80,0.7)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(BTN_A_POS.x,BTN_A_POS.y,BTN_A_POS.r,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle='#4CAF50';ctx.font='bold 11px "Courier New"';ctx.textAlign='center';ctx.fillText('A',BTN_A_POS.x,BTN_A_POS.y+4);
+ctx.fillStyle='rgba(33,150,243,0.3)';ctx.strokeStyle='rgba(33,150,243,0.7)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(BTN_JUMP_POS.x,BTN_JUMP_POS.y,BTN_JUMP_POS.r,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle='#2196F3';ctx.font='bold 9px "Courier New"';ctx.fillText('跳',BTN_JUMP_POS.x,BTN_JUMP_POS.y+3);
+ctx.fillStyle='rgba(244,67,54,0.3)';ctx.strokeStyle='rgba(244,67,54,0.7)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(BTN_B_POS.x,BTN_B_POS.y,BTN_B_POS.r,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle='#F44336';ctx.font='bold 11px "Courier New"';ctx.fillText('B',BTN_B_POS.x,BTN_B_POS.y+4);
 
-        // ==================== 地形生成 ====================
-        function getSurfaceHeight(x) {
-            const nx = x / WORLD_W;
-            let h = 60;
-            h += fbm(x * 0.008, 0, 4) * 25;
-            h += fbm(x * 0.03, 100, 2) * 10;
-            h += Math.sin(nx * Math.PI * 3) * 8;
-            h += Math.sin(nx * Math.PI * 7) * 4;
-            return Math.floor(h);
-        }
+const ptx=Math.floor(playerX),pty=Math.floor(playerY);let nc=false;for(let dy=-2;dy<=2&&!nc;dy++)for(let dx=-2;dx<=2&&!nc;dx++){const t=getTileAtWithOverride(ptx+dx,pty+dy);if(t===CRAFT_TABLE||t===WORKBENCH)nc=true;}if(nc){ctx.fillStyle='rgba(255,255,255,0.85)';ctx.font='9px "Courier New"';ctx.textAlign='center';ctx.fillText('按 A 使用合成台',W/2,H-14);}}
 
-        function getCaveNoise(x, y) {
-            const depthFactor = (y - 60) / 140;
-            const base = fbm(x * 0.06, y * 0.06, 3);
-            const detail = fbm(x * 0.15, y * 0.15, 2) * 0.3;
-            const verticalStretch = Math.sin(y * 0.02) * 0.15;
-            const horizontalBias = Math.cos(x * 0.04) * 0.1;
-            let caveVal = base + detail + verticalStretch + horizontalBias;
-            if (y < 65) caveVal += 0.6;
-            if (depthFactor > 0.6) caveVal -= depthFactor * 0.4;
-            return caveVal;
-        }
-
-        function getTileAt(x, y) {
-            if (x < 0 || x >= WORLD_W || y < 0 || y >= WORLD_H) return STONE;
-            const surfH = getSurfaceHeight(x);
-            if (y < surfH - 1) {
-                if (y >= surfH - 8 && y < surfH - 1) {
-                    const treeBaseX = Math.floor(x / 6) * 6 + 3;
-                    const distX = Math.abs(x - treeBaseX);
-                    const treeHeight = 3 + Math.floor(hash(treeBaseX, 0) * 4);
-                    if (distX < 1 && y >= surfH - treeHeight - 1 && y < surfH - 1) {
-                        if (distX < 0.6 && y >= surfH - treeHeight - 1 && y < surfH - 1) return WOOD;
-                        if (y >= surfH - treeHeight - 1 && y < surfH) return LEAF;
-                    }
-                    if (distX < 2 && y >= surfH - treeHeight && y < surfH - 1) {
-                        const leafChance = hash(x, y) > 0.3;
-                        if (leafChance && !(distX < 1 && y >= surfH - treeHeight - 1)) return LEAF;
-                    }
-                }
-                return AIR;
-            }
-            if (y === surfH - 1) return GRASS;
-            if (y >= surfH && y <= surfH + 3) return DIRT;
-            const caveVal = getCaveNoise(x, y);
-            const isCave = caveVal > 0.45;
-            if (isCave && y > surfH + 3) return AIR;
-            if (!isCave && y > surfH + 3) {
-                const oreNoise = fbm(x * 0.12, y * 0.12, 2);
-                const depth = y - surfH;
-                if (depth > 80 && oreNoise > 0.72) return DIAMOND;
-                if (depth > 60 && oreNoise > 0.62) return GOLD;
-                if (depth > 40 && oreNoise > 0.55) return SILVER;
-                if (depth > 25 && oreNoise > 0.48) return IRON;
-                if (depth > 15 && oreNoise > 0.40) return COPPER;
-                if (depth > 10 && oreNoise < -0.55) return COAL;
-            }
-            if (y > surfH + 80 && !isCave) return STONE;
-            if (y > surfH + 6 && !isCave) {
-                if (hash(x, y) < 0.75) return STONE;
-                return DIRT;
-            }
-            if (!isCave && y >= surfH) return DIRT;
-            return STONE;
-        }
-
-        // ==================== 世界覆盖数据 ====================
-        let worldOverrides = {};
-
-        function getTileAtWithOverride(x, y) {
-            const key = x + ',' + y;
-            if (worldOverrides.hasOwnProperty(key)) return worldOverrides[key];
-            return getTileAt(x, y);
-        }
-
-        function setTileOverride(x, y, tileType) {
-            const key = x + ',' + y;
-            worldOverrides[key] = tileType;
-        }
-
-        function isSolid(tileType) {
-            return tileType !== AIR && tileType !== null;
-        }
-
-        // ==================== 游戏状态 ====================
-        let playerX = WORLD_W / 2;
-        let playerY = getSurfaceHeight(Math.floor(playerX)) - 3;
-        let velocityX = 0;
-        let velocityY = 0;
-        let isOnGround = false;
-        let facingRight = true;
-
-        let cursorTileX = Math.floor(playerX);
-        let cursorTileY = Math.floor(playerY);
-        let cursorActive = false;
-
-        let hp = 100;
-        const maxHp = 100;
-
-        const backpack = {};
-        let selectedSlot = 0;
-        const quickSlots = [DIRT, STONE, WOOD, COPPER, null];
-
-        function addToBackpack(tileType, count = 1) {
-            if (!tileType || tileType === AIR) return false;
-            if (!backpack[tileType]) backpack[tileType] = 0;
-            backpack[tileType] += count;
-            return true;
-        }
-
-        function removeFromBackpack(tileType, count = 1) {
-            if (!backpack[tileType] || backpack[tileType] < count) return false;
-            backpack[tileType] -= count;
-            if (backpack[tileType] <= 0) delete backpack[tileType];
-            return true;
-        }
-
-        function getBackpackCount(tileType) {
-            return backpack[tileType] || 0;
-        }
-
-        function getSelectedItem() {
-            return quickSlots[selectedSlot];
-        }
-
-        addToBackpack(DIRT, 20);
-        addToBackpack(STONE, 10);
-        addToBackpack(WOOD, 5);
-
-        // ==================== 碰撞检测 ====================
-        function checkCollisionWorld(x, y, w, h) {
-            const left = Math.floor(x);
-            const right = Math.floor(x + w - 0.01);
-            const top = Math.floor(y);
-            const bottom = Math.floor(y + h - 0.01);
-            for (let cy = top; cy <= bottom; cy++) {
-                for (let cx = left; cx <= right; cx++) {
-                    if (cx >= 0 && cx < WORLD_W && cy >= 0 && cy < WORLD_H) {
-                        if (isSolid(getTileAtWithOverride(cx, cy))) return true;
-                    } else if (cx < 0 || cx >= WORLD_W || cy >= WORLD_H) {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        // ==================== 树的连锁破坏 ====================
-        function tryChopTree(tx, ty) {
-            const tile = getTileAtWithOverride(tx, ty);
-            if (tile !== WOOD) return null;
-
-            // 找树根（树干最底部）
-            let rootY = ty;
-            while (rootY < WORLD_H - 1 && getTileAtWithOverride(tx, rootY + 1) === WOOD) {
-                rootY++;
-            }
-            // 检查树根下方是否是地面
-            const belowRoot = getTileAtWithOverride(tx, rootY + 1);
-            if (!isSolid(belowRoot) && belowRoot !== GRASS) return null; // 不是树
-
-            // 找树顶
-            let topY = rootY;
-            while (topY > 0 && getTileAtWithOverride(tx, topY - 1) === WOOD) {
-                topY--;
-            }
-
-            // 统计从被挖位置到树顶的木头数量
-            let woodCount = 0;
-            const toRemove = [];
-            for (let y = topY; y <= rootY; y++) {
-                if (getTileAtWithOverride(tx, y) === WOOD) {
-                    if (y >= ty) woodCount++;
-                    toRemove.push({ x: tx, y: y });
-                }
-            }
-
-            // 找所有树叶（树干周围的LEAF）
-            const leavesToCheck = [];
-            for (let dy = -3; dy <= 1; dy++) {
-                for (let dx = -2; dx <= 2; dx++) {
-                    const lx = tx + dx;
-                    const ly = topY + dy;
-                    if (getTileAtWithOverride(lx, ly) === LEAF) {
-                        leavesToCheck.push({ x: lx, y: ly });
-                    }
-                }
-            }
-
-            // BFS扩展找所有相连树叶
-            const allLeaves = [];
-            const visited = {};
-            while (leavesToCheck.length > 0) {
-                const leaf = leavesToCheck.pop();
-                const key = leaf.x + ',' + leaf.y;
-                if (visited[key]) continue;
-                visited[key] = true;
-                if (getTileAtWithOverride(leaf.x, leaf.y) === LEAF) {
-                    allLeaves.push(leaf);
-                    for (let dy = -1; dy <= 1; dy++) {
-                        for (let dx = -1; dx <= 1; dx++) {
-                            if (dx === 0 && dy === 0) continue;
-                            const nx = leaf.x + dx;
-                            const ny = leaf.y + dy;
-                            const nk = nx + ',' + ny;
-                            if (!visited[nk] && getTileAtWithOverride(nx, ny) === LEAF) {
-                                leavesToCheck.push({ x: nx, y: ny });
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 移除所有标记方块
-            for (const p of toRemove) {
-                setTileOverride(p.x, p.y, AIR);
-            }
-            for (const p of allLeaves) {
-                setTileOverride(p.x, p.y, AIR);
-            }
-
-            return woodCount;
-        }
-
-        // ==================== 相机 ====================
-        let cameraX = playerX - VIEW_TILES_X / 2;
-        let cameraY = playerY - VIEW_TILES_Y / 2;
-
-        function updateCamera() {
-            const targetX = playerX - VIEW_TILES_X / 2;
-            const targetY = playerY - VIEW_TILES_Y / 2;
-            cameraX += (targetX - cameraX) * 0.15;
-            cameraY += (targetY - cameraY) * 0.15;
-            cameraX = Math.max(0, Math.min(WORLD_W - VIEW_TILES_X, cameraX));
-            cameraY = Math.max(0, Math.min(WORLD_H - VIEW_TILES_Y, cameraY));
-        }
-
-        // ==================== 输入系统 ====================
-        const keys = {
-            up: false, down: false, left: false, right: false,
-            jump: false, a: false, b: false
-        };
-        let joystickActive = false;
-        let joystickId = null;
-        let joystickDX = 0;
-        let joystickDY = 0;
-        let jumpPressed = false;
-
-        const JOYSTICK_CX = 280;
-        const JOYSTICK_CY = 410;
-        const JOYSTICK_RADIUS = 38;
-        const JOYSTICK_KNOB_R = 14;
-        const JOYSTICK_DEAD_ZONE = 6;
-        const BTN_R = 13;
-        const BTN_A_POS = { x: JOYSTICK_CX - 30, y: JOYSTICK_CY - 48, r: BTN_R };
-        const BTN_JUMP_POS = { x: JOYSTICK_CX + 32, y: JOYSTICK_CY - 38, r: BTN_R };
-        const BTN_B_POS = { x: JOYSTICK_CX - 42, y: JOYSTICK_CY - 10, r: BTN_R };
-
-        const DPAD = {
-            up:    { cx: 52, cy: 392, r: 16 },
-            down:  { cx: 52, cy: 444, r: 16 },
-            left:  { cx: 24, cy: 418, r: 16 },
-            right: { cx: 80, cy: 418, r: 16 }
-        };
-
-        const INV_X = 6;
-        const INV_Y = 100;
-        const INV_SIZE = 34;
-        const INV_ARROW_UP = { x: INV_X + INV_SIZE / 2, y: INV_Y - 16, r: 12 };
-        const INV_ARROW_DOWN = { x: INV_X + INV_SIZE / 2, y: INV_Y + INV_SIZE + 16, r: 12 };
-
-        function getTouchPos(e) {
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = W / rect.width;
-            const scaleY = H / rect.height;
-            return {
-                x: (e.clientX - rect.left) * scaleX,
-                y: (e.clientY - rect.top) * scaleY
-            };
-        }
-
-        function dist(x1, y1, x2, y2) {
-            const dx = x1 - x2;
-            const dy = y1 - y2;
-            return Math.sqrt(dx * dx + dy * dy);
-        }
-
-        function isInCircle(px, py, cx, cy, r) {
-            return dist(px, py, cx, cy) <= r;
-        }
-
-        canvas.addEventListener('pointerdown', function(e) {
-            e.preventDefault();
-            const pos = getTouchPos(e);
-
-            if (dist(pos.x, pos.y, JOYSTICK_CX, JOYSTICK_CY) < JOYSTICK_RADIUS + 10) {
-                joystickActive = true;
-                joystickId = e.pointerId;
-                joystickDX = 0;
-                joystickDY = 0;
-                cursorActive = true;
-                return;
-            }
-            if (isInCircle(pos.x, pos.y, BTN_A_POS.x, BTN_A_POS.y, BTN_A_POS.r + 4)) { keys.a = true; return; }
-            if (isInCircle(pos.x, pos.y, BTN_B_POS.x, BTN_B_POS.y, BTN_B_POS.r + 4)) { keys.b = true; return; }
-            if (isInCircle(pos.x, pos.y, BTN_JUMP_POS.x, BTN_JUMP_POS.y, BTN_JUMP_POS.r + 4)) { keys.jump = true; return; }
-            if (isInCircle(pos.x, pos.y, DPAD.up.cx, DPAD.up.cy, DPAD.up.r + 4)) { keys.up = true; return; }
-            if (isInCircle(pos.x, pos.y, DPAD.down.cx, DPAD.down.cy, DPAD.down.r + 4)) { keys.down = true; return; }
-            if (isInCircle(pos.x, pos.y, DPAD.left.cx, DPAD.left.cy, DPAD.left.r + 4)) { keys.left = true; return; }
-            if (isInCircle(pos.x, pos.y, DPAD.right.cx, DPAD.right.cy, DPAD.right.r + 4)) { keys.right = true; return; }
-            if (isInCircle(pos.x, pos.y, INV_ARROW_UP.x, INV_ARROW_UP.y, INV_ARROW_UP.r + 4)) {
-                selectedSlot = (selectedSlot - 1 + quickSlots.length) % quickSlots.length; return;
-            }
-            if (isInCircle(pos.x, pos.y, INV_ARROW_DOWN.x, INV_ARROW_DOWN.y, INV_ARROW_DOWN.r + 4)) {
-                selectedSlot = (selectedSlot + 1) % quickSlots.length; return;
-            }
-        });
-
-        canvas.addEventListener('pointermove', function(e) {
-            if (!joystickActive) return;
-            const pos = getTouchPos(e);
-            const dx = pos.x - JOYSTICK_CX;
-            const dy = pos.y - JOYSTICK_CY;
-            const d = Math.sqrt(dx * dx + dy * dy);
-            if (d < JOYSTICK_DEAD_ZONE) {
-                joystickDX = 0;
-                joystickDY = 0;
-            } else {
-                joystickDX = dx / d;
-                joystickDY = dy / d;
-            }
-        });
-
-        function releaseAll() {
-            joystickActive = false;
-            joystickId = null;
-            joystickDX = 0;
-            joystickDY = 0;
-            cursorActive = false;
-            keys.up = keys.down = keys.left = keys.right = false;
-            keys.a = keys.b = keys.jump = false;
-        }
-
-        canvas.addEventListener('pointerup', function(e) {
-            if (joystickActive && e.pointerId === joystickId) releaseAll();
-            keys.a = keys.b = keys.jump = false;
-            keys.up = keys.down = keys.left = keys.right = false;
-        });
-        canvas.addEventListener('pointerleave', releaseAll);
-        canvas.addEventListener('pointercancel', releaseAll);
-
-        window.addEventListener('keydown', function(e) {
-            switch (e.key) {
-                case 'ArrowLeft': keys.left = true; e.preventDefault(); break;
-                case 'ArrowRight': keys.right = true; e.preventDefault(); break;
-                case 'ArrowUp': keys.up = true; e.preventDefault(); break;
-                case 'ArrowDown': keys.down = true; e.preventDefault(); break;
-                case ' ': keys.jump = true; e.preventDefault(); break;
-                case 'j': case 'J': keys.b = true; break;
-                case 'k': case 'K': keys.a = true; break;
-            }
-        });
-        window.addEventListener('keyup', function(e) {
-            switch (e.key) {
-                case 'ArrowLeft': keys.left = false; break;
-                case 'ArrowRight': keys.right = false; break;
-                case 'ArrowUp': keys.up = false; break;
-                case 'ArrowDown': keys.down = false; break;
-                case ' ': keys.jump = false; break;
-                case 'j': case 'J': keys.b = false; break;
-                case 'k': case 'K': keys.a = false; break;
-            }
-        });
-
-        // ==================== 合成台初始化 ====================
-        (function() {
-            const cx = Math.floor(WORLD_W / 2) - 10;
-            const cy = getSurfaceHeight(cx) - 1;
-            setTileOverride(cx, cy, CRAFT_TABLE);
-            setTileOverride(cx + 1, cy, CRAFT_TABLE);
-        })();
-
-        // ==================== 游戏逻辑 ====================
-        let lastBtime = 0;
-        let lastAtime = 0;
-
-        function updateCursor() {
-            if (cursorActive && (Math.abs(joystickDX) > 0.05 || Math.abs(joystickDY) > 0.05)) {
-                const speed = 0.2;
-                let nx = cursorTileX + joystickDX * speed;
-                let ny = cursorTileY + joystickDY * speed;
-                const ptx = Math.floor(playerX);
-                const pty = Math.floor(playerY);
-                const dx = nx - ptx;
-                const dy = ny - pty;
-                const d = Math.sqrt(dx * dx + dy * dy);
-                if (d > CURSOR_MAX_DIST) {
-                    nx = ptx + (dx / d) * CURSOR_MAX_DIST;
-                    ny = pty + (dy / d) * CURSOR_MAX_DIST;
-                }
-                cursorTileX = Math.round(nx);
-                cursorTileY = Math.round(ny);
-            } else if (!cursorActive) {
-                cursorTileX = Math.floor(playerX);
-                cursorTileY = Math.floor(playerY);
-            }
-            cursorTileX = Math.max(0, Math.min(WORLD_W - 1, cursorTileX));
-            cursorTileY = Math.max(0, Math.min(WORLD_H - 1, cursorTileY));
-        }
-
-        function update() {
-            let moveX = 0;
-            if (keys.left) moveX = -1;
-            if (keys.right) moveX = 1;
-            velocityX = moveX * PLAYER_SPEED;
-            if (moveX > 0.05) facingRight = true;
-            if (moveX < -0.05) facingRight = false;
-
-            if (keys.jump && isOnGround && !jumpPressed) {
-                velocityY = JUMP_FORCE;
-                isOnGround = false;
-                jumpPressed = true;
-            }
-            if (!keys.jump) jumpPressed = false;
-
-            velocityY += GRAVITY;
-            if (velocityY > 8) velocityY = 8;
-
-            const playerW = 0.8;
-            const playerH = 1.7;
-            let newX = playerX + velocityX * 0.16;
-            if (!checkCollisionWorld(newX, playerY, playerW, playerH)) {
-                playerX = newX;
-            } else {
-                const halfX = playerX + (newX - playerX) * 0.3;
-                if (!checkCollisionWorld(halfX, playerY, playerW, playerH)) playerX = halfX;
-                velocityX = 0;
-            }
-
-            let newY = playerY + velocityY * 0.16;
-            if (!checkCollisionWorld(playerX, newY, playerW, playerH)) {
-                playerY = newY;
-                isOnGround = false;
-            } else {
-                if (velocityY > 0) {
-                    isOnGround = true;
-                    if (velocityY > 5) hp = Math.max(0, hp - Math.floor((velocityY - 5) * 8));
-                }
-                velocityY = 0;
-            }
-
-            playerX = Math.max(0.1, Math.min(WORLD_W - 0.9, playerX));
-            playerY = Math.max(0, Math.min(WORLD_H - 2, playerY));
-            updateCamera();
-            updateCursor();
-
-            const now = Date.now();
-
-            // B键 — 对光标选中方块操作
-            if (keys.b && now - lastBtime > 250) {
-                const tx = cursorTileX;
-                const ty = cursorTileY;
-                const ptx = Math.floor(playerX);
-                const pty = Math.floor(playerY);
-                const d = Math.abs(tx - ptx) + Math.abs(ty - pty);
-                if (d <= CURSOR_MAX_DIST + 1) {
-                    const tile = getTileAtWithOverride(tx, ty);
-                    if (isSolid(tile)) {
-                        // 挖掘
-                        if (tile === WOOD) {
-                            const woodCount = tryChopTree(tx, ty);
-                            if (woodCount !== null && woodCount > 0) {
-                                addToBackpack(WOOD, woodCount);
-                            } else if (woodCount === null) {
-                                setTileOverride(tx, ty, AIR);
-                                addToBackpack(WOOD, 1);
-                            }
-                        } else if (tile !== CRAFT_TABLE && tile !== CHEST && tile !== WORKBENCH) {
-                            setTileOverride(tx, ty, AIR);
-                            addToBackpack(tile, 1);
-                        }
-                    } else {
-                        // 放置
-                        const sel = getSelectedItem();
-                        if (sel && isSolid(sel) && getBackpackCount(sel) > 0) {
-                            if (!(tx === ptx && (ty === pty || ty === pty + 1))) {
-                                setTileOverride(tx, ty, sel);
-                                removeFromBackpack(sel, 1);
-                            }
-                        }
-                    }
-                }
-                lastBtime = now;
-            }
-
-            // A键 — 交互
-            if (keys.a && now - lastAtime > 400) {
-                const ptx = Math.floor(playerX);
-                const pty = Math.floor(playerY);
-                let nearCraft = false;
-                for (let dy = -2; dy <= 2 && !nearCraft; dy++) {
-                    for (let dx = -2; dx <= 2 && !nearCraft; dx++) {
-                        const t = getTileAtWithOverride(ptx + dx, pty + dy);
-                        if (t === CRAFT_TABLE || t === WORKBENCH) nearCraft = true;
-                    }
-                }
-                if (nearCraft && getBackpackCount(WOOD) >= 1) {
-                    removeFromBackpack(WOOD, 1);
-                    addToBackpack(DIRT, 2);
-                }
-                lastAtime = now;
-            }
-        }
-
-        // ==================== 渲染 ====================
-        function render() {
-            ctx.clearRect(0, 0, W, H);
-
-            const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-            skyGrad.addColorStop(0, '#4A90D9');
-            skyGrad.addColorStop(0.3, '#87CEEB');
-            skyGrad.addColorStop(0.7, '#5D4E37');
-            skyGrad.addColorStop(1, '#1A0E0A');
-            ctx.fillStyle = skyGrad;
-            ctx.fillRect(0, 0, W, H);
-
-            const startTX = Math.max(0, Math.floor(cameraX));
-            const startTY = Math.max(0, Math.floor(cameraY));
-            const endTX = Math.min(WORLD_W, Math.ceil(cameraX + VIEW_TILES_X) + 1);
-            const endTY = Math.min(WORLD_H, Math.ceil(cameraY + VIEW_TILES_Y) + 1);
-
-            for (let ty = startTY; ty < endTY; ty++) {
-                for (let tx = startTX; tx < endTX; tx++) {
-                    const tile = getTileAtWithOverride(tx, ty);
-                    if (tile === AIR || tile === null) continue;
-                    const sx = (tx - cameraX) * TILE_SIZE;
-                    const sy = (ty - cameraY) * TILE_SIZE;
-                    const color = TILE_COLORS[tile];
-                    if (!color) continue;
-                    ctx.fillStyle = color;
-                    ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
-                    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-                    ctx.lineWidth = 0.5;
-                    ctx.strokeRect(sx, sy, TILE_SIZE, TILE_SIZE);
-
-                    if (tile === CRAFT_TABLE || tile === WORKBENCH) {
-                        ctx.fillStyle = '#8B7355';
-                        ctx.fillRect(sx + 2, sy + 2, TILE_SIZE - 4, 2);
-                        ctx.fillRect(sx + TILE_SIZE / 2 - 1, sy + 4, 2, TILE_SIZE - 6);
-                    }
-                    if (tile === GRASS) {
-                        ctx.fillStyle = '#66BB6A';
-                        ctx.fillRect(sx, sy, TILE_SIZE, 2);
-                    }
-                    if ([COPPER, IRON, SILVER, GOLD, DIAMOND, COAL].includes(tile)) {
-                        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-                        ctx.fillRect(sx + TILE_SIZE * 0.3, sy + TILE_SIZE * 0.3, TILE_SIZE * 0.4, TILE_SIZE * 0.4);
-                    }
-                }
-            }
-
-            // 光标选中高亮
-            const hsx = (cursorTileX - cameraX) * TILE_SIZE;
-            const hsy = (cursorTileY - cameraY) * TILE_SIZE;
-            ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(hsx, hsy, TILE_SIZE, TILE_SIZE);
-
-            // 光标十字
-            const csx = (cursorTileX - cameraX) * TILE_SIZE + TILE_SIZE / 2;
-            const csy = (cursorTileY - cameraY) * TILE_SIZE + TILE_SIZE / 2;
-            const crossLen = TILE_SIZE * 0.6;
-            ctx.strokeStyle = '#FFF';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(csx - crossLen, csy);
-            ctx.lineTo(csx + crossLen, csy);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(csx, csy - crossLen);
-            ctx.lineTo(csx, csy + crossLen);
-            ctx.stroke();
-
-            // 玩家
-            const psx = (playerX - cameraX) * TILE_SIZE;
-            const psy = (playerY - cameraY) * TILE_SIZE;
-            const pW = TILE_SIZE * 0.8;
-            const pH = TILE_SIZE * 1.7;
-            ctx.fillStyle = '#3F51B5';
-            ctx.fillRect(psx, psy + TILE_SIZE * 0.25, pW, pH - TILE_SIZE * 0.25);
-            ctx.fillStyle = '#FFCC80';
-            ctx.fillRect(psx - 1, psy - 1, pW + 2, TILE_SIZE * 0.6);
-            ctx.fillStyle = '#5D4037';
-            ctx.fillRect(psx - 1, psy - 2, pW + 2, TILE_SIZE * 0.25);
-            const eyeX = facingRight ? psx + pW - 4 : psx + 2;
-            ctx.fillStyle = '#000';
-            ctx.fillRect(eyeX, psy + 1, 2, 2);
-            ctx.fillStyle = '#616161';
-            ctx.fillRect(psx + 2, psy + pH - TILE_SIZE * 0.35, pW * 0.35, TILE_SIZE * 0.35);
-            ctx.fillRect(psx + pW - pW * 0.35 - 2, psy + pH - TILE_SIZE * 0.35, pW * 0.35, TILE_SIZE * 0.35);
-
-            // ============ UI ============
-
-            // 血条
-            const barW = 80, barH = 8, barX = 12, barY = 10;
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
-            ctx.fillStyle = '#555';
-            ctx.fillRect(barX, barY, barW, barH);
-            const hpPct = hp / maxHp;
-            ctx.fillStyle = hpPct > 0.5 ? '#4CAF50' : hpPct > 0.25 ? '#FF9800' : '#F44336';
-            ctx.fillRect(barX, barY, barW * hpPct, barH);
-            ctx.fillStyle = '#FFF';
-            ctx.font = '7px "Courier New"';
-            ctx.textAlign = 'center';
-			ctx.fillText(hp + '/' + maxHp, barX + barW / 2, barY + barH - 1);
-
-            // 物品栏
-            const ivX = INV_X, ivY = INV_Y, ivS = INV_SIZE;
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.beginPath();
-            ctx.arc(INV_ARROW_UP.x, INV_ARROW_UP.y, INV_ARROW_UP.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#FFF';
-            ctx.font = '10px "Courier New"';
-            ctx.textAlign = 'center';
-            ctx.fillText('▲', INV_ARROW_UP.x, INV_ARROW_UP.y + 3);
-
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.strokeStyle = '#888';
-            ctx.lineWidth = 1.5;
-            ctx.fillRect(ivX, ivY, ivS, ivS);
-            ctx.strokeRect(ivX, ivY, ivS, ivS);
-            const sel = getSelectedItem();
-            if (sel && isSolid(sel)) {
-                ctx.fillStyle = TILE_COLORS[sel];
-                ctx.fillRect(ivX + 3, ivY + 3, ivS - 6, ivS - 6);
-                ctx.fillStyle = '#FFF';
-                ctx.font = '8px "Courier New"';
-                ctx.textAlign = 'right';
-                ctx.fillText(getBackpackCount(sel), ivX + ivS - 2, ivY + ivS - 2);
-            } else if (sel === null) {
-                ctx.fillStyle = '#FFF';
-                ctx.font = '12px "Courier New"';
-                ctx.textAlign = 'center';
-                ctx.fillText('✊', ivX + ivS / 2, ivY + ivS / 2 + 4);
-            }
-
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.beginPath();
-            ctx.arc(INV_ARROW_DOWN.x, INV_ARROW_DOWN.y, INV_ARROW_DOWN.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#FFF';
-            ctx.fillText('▼', INV_ARROW_DOWN.x, INV_ARROW_DOWN.y + 3);
-
-            // 方向键
-            function drawDpad(cx, cy, r, label) {
-                ctx.fillStyle = 'rgba(255,255,255,0.15)';
-                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                ctx.arc(cx, cy, r, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.stroke();
-                ctx.fillStyle = '#FFF';
-                ctx.font = 'bold 10px "Courier New"';
-                ctx.textAlign = 'center';
-                ctx.fillText(label, cx, cy + 4);
-            }
-            drawDpad(DPAD.up.cx, DPAD.up.cy, DPAD.up.r, '▲');
-            drawDpad(DPAD.down.cx, DPAD.down.cy, DPAD.down.r, '▼');
-            drawDpad(DPAD.left.cx, DPAD.left.cy, DPAD.left.r, '◀');
-            drawDpad(DPAD.right.cx, DPAD.right.cy, DPAD.right.r, '▶');
-
-            // 摇杆
-            ctx.fillStyle = 'rgba(255,255,255,0.12)';
-            ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(JOYSTICK_CX, JOYSTICK_CY, JOYSTICK_RADIUS, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            const knobX = JOYSTICK_CX + joystickDX * (JOYSTICK_RADIUS - JOYSTICK_KNOB_R);
-            const knobY = JOYSTICK_CY + joystickDY * (JOYSTICK_RADIUS - JOYSTICK_KNOB_R);
-            ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            ctx.beginPath();
-            ctx.arc(knobX, knobY, JOYSTICK_KNOB_R, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.arc(JOYSTICK_CX, JOYSTICK_CY, JOYSTICK_DEAD_ZONE, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // A键
-            ctx.fillStyle = 'rgba(76,175,80,0.3)';
-            ctx.strokeStyle = 'rgba(76,175,80,0.7)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(BTN_A_POS.x, BTN_A_POS.y, BTN_A_POS.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#4CAF50';
-            ctx.font = 'bold 11px "Courier New"';
-            ctx.textAlign = 'center';
-            ctx.fillText('A', BTN_A_POS.x, BTN_A_POS.y + 4);
-
-            // 跳跃
-            ctx.fillStyle = 'rgba(33,150,243,0.3)';
-            ctx.strokeStyle = 'rgba(33,150,243,0.7)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(BTN_JUMP_POS.x, BTN_JUMP_POS.y, BTN_JUMP_POS.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#2196F3';
-            ctx.font = 'bold 9px "Courier New"';
-            ctx.fillText('跳', BTN_JUMP_POS.x, BTN_JUMP_POS.y + 3);
-
-            // B键
-            ctx.fillStyle = 'rgba(244,67,54,0.3)';
-            ctx.strokeStyle = 'rgba(244,67,54,0.7)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(BTN_B_POS.x, BTN_B_POS.y, BTN_B_POS.r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#F44336';
-            ctx.font = 'bold 11px "Courier New"';
-            ctx.fillText('B', BTN_B_POS.x, BTN_B_POS.y + 4);
-
-            // 合成台提示
-            const ptx = Math.floor(playerX);
-            const pty = Math.floor(playerY);
-            let nearCraft = false;
-            for (let dy = -2; dy <= 2 && !nearCraft; dy++) {
-                for (let dx = -2; dx <= 2 && !nearCraft; dx++) {
-                    const t = getTileAtWithOverride(ptx + dx, pty + dy);
-                    if (t === CRAFT_TABLE || t === WORKBENCH) nearCraft = true;
-                }
-            }
-            if (nearCraft) {
-                ctx.fillStyle = 'rgba(255,255,255,0.85)';
-                ctx.font = '9px "Courier New"';
-                ctx.textAlign = 'center';
-                ctx.fillText('按 A 使用合成台', W / 2, H - 14);
-            }
-        }
-
-        // ==================== 主循环 ====================
-        function gameLoop() {
-            update();
-            render();
-            requestAnimationFrame(gameLoop);
-        }
-        gameLoop();
-        console.log('🚀 丐版泰拉瑞亚 9 Pro 启动完毕！');
+function gameLoop(){update();render();requestAnimationFrame(gameLoop);}
+gameLoop();
+console.log('🚀 丐版泰拉瑞亚 9 Pro 启动！');
 </script>
-  </body>
+</body>
 </html>
