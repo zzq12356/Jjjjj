@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
+<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>手环9 Pro · 丐版泰拉瑞亚</title>
-<style>
+    <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #1a1a2e;
@@ -20,10 +20,10 @@
             box-shadow: 0 0 40px rgba(0,0,0,0.8), inset 0 0 0 3px #2a2a2a;
         }
         canvas { display: block; width: 336px; height: 480px; border-radius: 32px; }
-</style>
-  </head>
-  <body>
-	<div class="band-frame"><canvas id="game"></canvas></div>
+    </style>
+</head>
+<body>
+<div class="band-frame"><canvas id="game"></canvas></div>
 <script>
 const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
 const W=336,H=480;canvas.width=W;canvas.height=H;
@@ -68,7 +68,7 @@ function updateCamera(){const tx=playerX-VIEW_TILES_X/2,ty=playerY-VIEW_TILES_Y/
 
 const keys={up:false,down:false,left:false,right:false,jump:false,a:false,b:false,backpack:false};
 let joystickActive=false,joystickId=null,joystickDX=0,joystickDY=0,jumpPressed=false;
-const JOYSTICK_CX=280,JOYSTICK_CY=410,JOYSTICK_RADIUS=38,JOYSTICK_KNOB_R=14,JOYSTICK_DEAD_ZONE=6,BTN_R=13;
+const JOYSTICK_CX=280,JOYSTICK_CY=410,JOYSTICK_RADIUS=38,JOYSTICK_KNOB_R=14,JOYSTICK_DEAD_ZONE=2,BTN_R=13;
 const BTN_A_POS={x:JOYSTICK_CX-30,y:JOYSTICK_CY-48,r:BTN_R};
 const BTN_JUMP_POS={x:JOYSTICK_CX+32,y:JOYSTICK_CY-38,r:BTN_R};
 const BTN_B_POS={x:JOYSTICK_CX-42,y:JOYSTICK_CY-10,r:BTN_R};
@@ -82,8 +82,18 @@ function getTouchPos(e){const r=canvas.getBoundingClientRect();return{x:(e.clien
 function dist(x1,y1,x2,y2){const dx=x1-x2,dy=y1-y2;return Math.sqrt(dx*dx+dy*dy);}
 function isInCircle(px,py,cx,cy,r){return dist(px,py,cx,cy)<=r;}
 
+function updateJoystickFromPos(px,py){
+    const dx=px-JOYSTICK_CX,dy=py-JOYSTICK_CY,d=Math.sqrt(dx*dx+dy*dy);
+    if(d<JOYSTICK_DEAD_ZONE){joystickDX=0;joystickDY=0;}
+    else{joystickDX=dx/d;joystickDY=dy/d;}
+}
+
 canvas.addEventListener('pointerdown',e=>{e.preventDefault();const p=getTouchPos(e);
-if(dist(p.x,p.y,JOYSTICK_CX,JOYSTICK_CY)<JOYSTICK_RADIUS+10){joystickActive=true;joystickId=e.pointerId;joystickDX=0;joystickDY=0;cursorActive=true;return;}
+if(dist(p.x,p.y,JOYSTICK_CX,JOYSTICK_CY)<JOYSTICK_RADIUS+10){
+    joystickActive=true;joystickId=e.pointerId;cursorActive=true;
+    updateJoystickFromPos(p.x,p.y);
+    return;
+}
 if(p.x>=BACKPACK_BTN.x&&p.x<=BACKPACK_BTN.x+BACKPACK_BTN.w&&p.y>=BACKPACK_BTN.y&&p.y<=BACKPACK_BTN.y+BACKPACK_BTN.h){keys.backpack=true;return;}
 if(isInCircle(p.x,p.y,BTN_A_POS.x,BTN_A_POS.y,BTN_A_POS.r+4)){keys.a=true;return;}
 if(isInCircle(p.x,p.y,BTN_B_POS.x,BTN_B_POS.y,BTN_B_POS.r+4)){keys.b=true;return;}
@@ -95,7 +105,7 @@ if(isInCircle(p.x,p.y,DPAD.right.cx,DPAD.right.cy,DPAD.right.r+4)){keys.right=tr
 if(isInCircle(p.x,p.y,INV_ARROW_UP.x,INV_ARROW_UP.y,INV_ARROW_UP.r+4)){selectedSlot=(selectedSlot-1+quickSlots.length)%quickSlots.length;return;}
 if(isInCircle(p.x,p.y,INV_ARROW_DOWN.x,INV_ARROW_DOWN.y,INV_ARROW_DOWN.r+4)){selectedSlot=(selectedSlot+1)%quickSlots.length;return;}});
 
-canvas.addEventListener('pointermove',e=>{if(!joystickActive)return;const p=getTouchPos(e),dx=p.x-JOYSTICK_CX,dy=p.y-JOYSTICK_CY,d=Math.sqrt(dx*dx+dy*dy);if(d<JOYSTICK_DEAD_ZONE){joystickDX=0;joystickDY=0;}else{joystickDX=dx/d;joystickDY=dy/d;}});
+canvas.addEventListener('pointermove',e=>{if(!joystickActive)return;const p=getTouchPos(e);updateJoystickFromPos(p.x,p.y);});
 
 function releaseAll(){joystickActive=false;joystickId=null;joystickDX=0;joystickDY=0;cursorActive=false;keys.up=keys.down=keys.left=keys.right=false;keys.a=keys.b=keys.jump=false;keys.backpack=false;}
 canvas.addEventListener('pointerup',e=>{if(joystickActive&&e.pointerId===joystickId)releaseAll();keys.a=keys.b=keys.jump=false;keys.up=keys.down=keys.left=keys.right=false;keys.backpack=false;});
@@ -199,5 +209,5 @@ function gameLoop(){update();render();requestAnimationFrame(gameLoop);}
 gameLoop();
 console.log('🚀 丐版泰拉瑞亚 9 Pro 启动！');
 </script>
-  </body>
+</body>
 </html>
